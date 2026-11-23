@@ -2,12 +2,12 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""spatial-current-observation/3: the pad track re-acquires after repeated rejections.
+"""The pad track re-acquires after repeated rejections (``contracts.TRACK_REACQUIRE_RULE``).
 
 The reference ABG track initialises the pad velocity to the OWN velocity and
 corrects it by 0.02/gap per frame; at Isaac's ~10 Hz, or after a handover kick,
-its prediction drifts past the innovation gate and it never accepts a frame
-again (isaac-eval/2: 8 of 14 missed approaches, G0_G4_STATUS_KO.md 10.8).
+its prediction drifts past the innovation gate and, without re-acquisition, it
+never accepts a frame again.
 """
 from __future__ import annotations
 

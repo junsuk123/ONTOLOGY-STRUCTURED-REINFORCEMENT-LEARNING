@@ -2,7 +2,7 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""Camera-frame kinematics of the pad estimate, from the current state alone (guide 7).
+"""Camera-frame kinematics of the pad estimate, from the current state alone (paper Sec. 3.1).
 
 W is ENU, B is FLU, C is the optical frame (+X right, +Y down, +Z forward).
 The rates are the instantaneous kinematics of the current estimate, not a
@@ -40,7 +40,7 @@ def rotation_world_from_body(roll: float, pitch: float, yaw: float) -> np.ndarra
 class CameraKinematics:
     """Pad centre in the camera and its image projection.
 
-    Projection values are the registered neutral 0.0 whenever ``front_valid``
+    Projection values are the neutral 0.0 whenever ``front_valid``
     is False; ``p_c``/``p_c_dot`` are also 0.0 when there is no estimate at
     all, because the zeroed estimate would otherwise project a fictitious
     point 0.16 m behind the lens.

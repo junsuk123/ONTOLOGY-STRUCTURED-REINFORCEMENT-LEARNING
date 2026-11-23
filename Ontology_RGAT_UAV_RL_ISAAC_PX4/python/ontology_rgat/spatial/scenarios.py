@@ -46,7 +46,7 @@ def sample_spatial_scenario(seed):
 
 
 def sample_planar_scenario(seed):
-    """The paired spatial draw projected onto the MATLAB x-z plane.
+    """The paired spatial draw projected onto the planar x-z plane.
 
     Calling the spatial sampler first preserves its complete RNG draw order;
     only the evaluator/plant heading is constrained to zero afterwards.
@@ -55,9 +55,9 @@ def sample_planar_scenario(seed):
     return SpatialScenario(sample.t1, sample.t2, sample.v0, sample.a2, 0.0)
 
 
-# spatial_current_semantics_v1 task v5 on Isaac (guide 11.6, 2026-10-30).
-# The episode's composition draw is made ONCE, by the learner
-# (current_semantics/scenario.py, from the episode seed), and travels to Isaac
+# The spatial_current_semantics_v1 scenario on Isaac. The episode's
+# composition draw is made ONCE, by the learner (current_semantics/scenario.py,
+# from the episode seed), and travels to Isaac
 # as the scenario name; the gateway forwards it, pad_motion.py drives the deck
 # along it and landing_world.py puts the entry at its offset.  Isaac draws
 # nothing of its own for these fields, so the local plant and Isaac fly the

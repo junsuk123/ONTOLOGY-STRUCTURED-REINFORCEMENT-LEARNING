@@ -2,7 +2,7 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""The 21D current observation and the registered contract of spatial_current_semantics_v1."""
+"""The 21D current observation and the base contract of the current-observation route."""
 import json
 import math
 from pathlib import Path
@@ -114,8 +114,8 @@ def test_decode_and_encode_agree_with_direct_policy_spatial_vector():
 
 
 def test_source_rescaling_changes_only_the_overridden_signed_channels():
-    # observation/2: the landing-regime scales put the 0.30 m/s touchdown limit
-    # at 0.23 of a relative-velocity channel instead of 0.03.
+    # The landing-regime scales put the 0.30 m/s touchdown limit at 0.23 of a
+    # relative-velocity channel instead of 0.03.
     physical = CurrentPhysical(
         ex=0.2, ey=-0.1, h=0.3, vrx=0.3, vry=-0.1, vgx=0.5, vgy=0.2, vz=-0.3, roll=0.05,
         pitch=-0.04, yaw=0.3, p=0.1, q=-0.1, r=0.0, vision_updated=True, vision_age_s=0.1,

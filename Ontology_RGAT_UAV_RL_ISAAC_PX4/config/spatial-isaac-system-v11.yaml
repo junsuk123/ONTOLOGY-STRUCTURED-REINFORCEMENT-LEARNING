@@ -1,8 +1,7 @@
 # spatial-reference/4: the Isaac-calibrated vehicle.
 #
 # Extends v9 (capture-time-aligned optics, direct acceleration, seeded
-# disturbances) with two geometric changes measured on the first learned-policy
-# Isaac flights of 2026-10-06, both of which landed 0 of 22 episodes:
+# disturbances) with two geometric changes:
 #
 # * Landing gear. The camera is mounted 0.16 m below the body and the stock
 #   Iris touched down with its body 0.12 m above the deck, so at contact the

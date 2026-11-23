@@ -2,23 +2,4 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""Deterministic controllers shared by every benchmark reward mode."""
-
-from .planar_controller import (PLANAR_ACTION_DIM, PLANAR_ACTION_NAMES,
-                                PLANAR_ACTION_UNITS, STANDARD_GRAVITY,
-                                PlanarCommand, PlanarLongitudinalController)
-from .pn_guidance import (PN_GUIDANCE_METHOD, PNGuidanceConfig,
-                          PNGuidanceController, PNGuidanceState)
-from .velocity_controller import VelocityCommand, VelocityYawRateController
-from .spatial_controller import (SPATIAL_ACTION_CONTRACT, SPATIAL_ACTION_NAMES,
-                                 SpatialCommand, SpatialAccelerationController)
-
-__all__ = [
-    "PLANAR_ACTION_DIM", "PLANAR_ACTION_NAMES", "PLANAR_ACTION_UNITS",
-    "STANDARD_GRAVITY", "PlanarCommand", "PlanarLongitudinalController",
-    "PN_GUIDANCE_METHOD", "PNGuidanceConfig", "PNGuidanceController",
-    "PNGuidanceState",
-    "VelocityCommand", "VelocityYawRateController",
-    "SPATIAL_ACTION_CONTRACT", "SPATIAL_ACTION_NAMES", "SpatialCommand",
-    "SpatialAccelerationController",
-]
+"""The acceleration-to-attitude adapter between the policy and the flight controller."""

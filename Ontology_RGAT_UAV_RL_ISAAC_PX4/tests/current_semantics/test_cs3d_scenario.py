@@ -2,7 +2,8 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""spatial-current-scenario/1 (task v5): the omnidirectional composition scenario."""
+"""spatial-current-scenario/1 (scenario.py): the omnidirectional approach scenario (paper
+Sec. 4.1)."""
 from __future__ import annotations
 
 import collections
@@ -58,7 +59,7 @@ def test_the_plant_flies_the_drawn_geometry_and_primes_a_fresh_frame():
         assert sector(math.atan2(flight.pad_velocity[1], flight.pad_velocity[0]), 4) == d.heading_bin
         if m.optical_position is not None:   # the primed frame is the NEW geometry
             assert np.linalg.norm(np.asarray(m.optical_position) - r) < 0.15
-    # Easy rungs shrink the offset as the /12 curriculum does.
+    # Easy rungs shrink the offset as the base plant's curriculum does.
     easy = ScenarioLocalBackend(local_plant_config(CONFIG), difficulty=0.0, scenario=SPEC,
                                 split="in_distribution")
     _, truth = easy.reset(995001)

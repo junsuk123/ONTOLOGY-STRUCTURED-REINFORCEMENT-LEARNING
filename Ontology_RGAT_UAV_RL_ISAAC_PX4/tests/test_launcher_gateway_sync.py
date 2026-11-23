@@ -7,12 +7,8 @@
 The gateway the stack runs is the ASCII-path mirror's copy, not this
 repository's. A stale mirror starts cleanly and only then refuses the protocol
 check, so the cost of forgetting is an Isaac boot plus the two relaunches
-``ExternalStack`` makes before it gives up.
-
-On 2026-09-22 a new deck scenario was added to ``protocol.py`` and ``./run.sh``
-failed exactly that way: ``scripts/run_two_pipeline.sh`` -- the launcher a bare
-``./run.sh`` uses -- was the only one of the three that skipped the sync the
-other two have always done.
+``ExternalStack`` makes before it gives up -- for example after a new deck
+scenario is added to ``protocol.py``.
 """
 from __future__ import annotations
 
@@ -22,8 +18,7 @@ import re
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-# Since 2026-11-20 the one launcher is ontology_rgat.live_stack (the shell launchers of the
-# archived pipelines are in archive/non_orl_20261120.tar.zst).
+# The one launcher of an owned Isaac/PX4 stack.
 LAUNCHER = ROOT / "python" / "ontology_rgat" / "live_stack.py"
 
 

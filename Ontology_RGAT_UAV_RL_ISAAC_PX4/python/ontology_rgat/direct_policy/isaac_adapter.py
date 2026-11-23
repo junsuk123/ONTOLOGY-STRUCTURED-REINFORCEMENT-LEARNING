@@ -5,7 +5,7 @@
 """Isaac/PX4 boundary helpers for the direct-policy profiles.
 
 Imports stay pure: constructing a payload never imports ROS, starts Isaac, or
-acquires a gateway.  The explicit runner performs those operations only after
+acquires a gateway.  Flights happen only through the owned stack, after
 ``--allow-isaac``.
 """
 from __future__ import annotations

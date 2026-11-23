@@ -2,21 +2,21 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""``./run.sh current-semantics-3d``: dry runs create nothing, gated stages refuse.
+"""``./run.sh current-semantics-3d``: dry runs create nothing, the Isaac stage is refused
+without --allow-isaac, and options are accepted only by the stages they belong to.
 
-Every invocation passes an explicit stage and writes only under tmp_path; no
-stage here trains, and none can reach a flight stack (coupling --backend isaac
-is refused before anything is imported).
+Every invocation writes only under tmp_path; no stage here trains, and none can reach a
+flight stack.
 """
 import json
 import os
 from pathlib import Path
-import re
 import subprocess
 import sys
 
 import pytest
 
+from ontology_rgat.current_semantics import budget, speed
 from ontology_rgat.current_semantics.experiment import LOCK_NAME, owned
 
 
@@ -24,12 +24,16 @@ PROJECT = Path(__file__).resolve().parents[2]
 REPOSITORY = PROJECT.parent
 RUN_SH = REPOSITORY / "run.sh"
 ROUTE = "current-semantics-3d"
-GATED = ("register-development", "develop")
+# The analysis plan files are kept by the authors and are not in the public repository.
+needs_plans = pytest.mark.skipif(
+    not all(p.exists() for p in (speed.DEFAULT_PATH, budget.DEFAULT_PATH,
+                                 budget.ISAAC_DEFAULT_PATH)),
+    reason="analysis plan files are kept by the authors")
 
 
-def run(*args, timeout=180):
+def run(*args, timeout=180, cwd=PROJECT):
     return subprocess.run(["bash", str(RUN_SH), ROUTE, *args], capture_output=True,
-                          text=True, timeout=timeout, cwd=PROJECT)
+                          text=True, timeout=timeout, cwd=cwd)
 
 
 def payload(done):
@@ -37,135 +41,57 @@ def payload(done):
     return json.loads(done.stdout[start:done.stdout.rindex("}") + 1])
 
 
-def test_help_lists_the_route_and_keeps_the_guarded_strings():
+def test_help_lists_the_stages_and_a_bare_call_starts_nothing():
     done = subprocess.run(["bash", str(RUN_SH), "--help"], capture_output=True, text=True,
                           timeout=30)
     assert done.returncode == 0
-    for text in (ROUTE, "--allow-isaac", "starts nothing", "archived"):
+    for text in (ROUTE, "register-speed", "budget-report", "isaac-budget", "--allow-isaac",
+                 "starts nothing"):
         assert text in done.stdout
-
-
-def test_only_the_current_semantics_route_remains_and_a_bare_call_starts_nothing():
-    """Every other route was archived on 2026-11-20; a bare ./run.sh prints the usage."""
-    body = RUN_SH.read_text()
-    assert re.search(rf"^\s+{re.escape(ROUTE)}\)\s*$", body, re.M)
-    for gone in ("system", "all", "reference", "spatial", "matlab-port", "isaac-legacy",
-                 "wmon-demo"):
-        assert not re.search(rf"^\s+{re.escape(gone)}\)\s*$", body, re.M), gone
     bare = subprocess.run(["bash", str(RUN_SH)], capture_output=True, text=True, timeout=30)
     assert bare.returncode == 0 and "Usage" in bare.stdout
     unknown = subprocess.run(["bash", str(RUN_SH), "system"], capture_output=True, text=True,
                              timeout=30)
     assert unknown.returncode == 2
-    assert "--takeover" not in body.split("case")[0]
 
 
-@pytest.mark.parametrize("stage, extra", [("audit", ()), ("fixtures", ()),
-                                          ("smoke", ("--steps", "4")),
-                                          ("coupling", ("--backend", "local")),
-                                          ("report", ())])
-def test_dry_run_prints_the_plan_and_creates_nothing(tmp_path, stage, extra):
+@needs_plans
+@pytest.mark.parametrize("stage", ["register-speed", "speed-report", "register-budget",
+                                   "budget-report", "register-isaac-budget"])
+def test_dry_run_prints_the_plan_and_creates_nothing(tmp_path, stage):
     root = tmp_path / "x"
-    done = run("--stage", stage, "--dry-run", "--run-root", str(root), *extra)
+    done = run("--stage", stage, "--dry-run", "--run-root", str(root))
     assert done.returncode == 0, done.stderr
     plan = payload(done)
     assert plan["schema_id"] == "spatial_current_semantics_v1" and plan["dry_run"]
     assert plan["manifest"]["calibration_hash"] and plan["manifest"]["algorithm_hash"]
-    assert set(plan["gates"]) == {"G0", "G1", "G2", "G3", "G4"}
-    assert plan["gates"]["G0"]["status"] == "waived" and "2026-10-28" in plan["gates"]["G0"]["waiver"]
-    assert not root.exists()
-
-
-@pytest.mark.parametrize("stage", GATED)
-@pytest.mark.parametrize("dry", [False, True])
-def test_development_and_confirmation_stages_are_refused(tmp_path, stage, dry):
-    root = tmp_path / "x"
-    done = run("--stage", stage, "--run-root", str(root), *(["--dry-run"] if dry else []))
-    assert done.returncode == 3
-    assert payload(done)["status"] == "REFUSED"
     assert not root.exists()
 
 
 @pytest.mark.parametrize("dry", [False, True])
-def test_isaac_coupling_without_allow_isaac_is_refused_and_contacts_nothing(tmp_path, dry):
+def test_isaac_budget_without_allow_isaac_is_refused_and_contacts_nothing(tmp_path, dry):
     root = tmp_path / "x"
-    done = run("--stage", "coupling", "--backend", "isaac", "--run-root", str(root),
+    done = run("--stage", "isaac-budget", "--run-root", str(root),
                *(["--dry-run"] if dry else []))
     assert done.returncode == 3
     assert "--allow-isaac" in payload(done)["reason"]
     assert not root.exists()
 
 
-def test_isaac_coupling_dry_run_shows_the_owned_stack_plan_and_starts_nothing(tmp_path):
-    # NEVER drop --dry-run here: with --allow-isaac the stage starts Isaac Sim + PX4.
-    root = tmp_path / "x"
-    done = run("--stage", "coupling", "--backend", "isaac", "--allow-isaac", "--dry-run",
-               "--run-root", str(root))
-    assert done.returncode == 0, done.stderr
-    plan = payload(done)
-    assert plan["backend"] == "isaac" and plan["starts_owned_stack"] is True
-    assert plan["adopts_running_isaac"] is False and plan["isaac_seeds"] == [990001, 990002]
-    assert plan["will_write"] == [str(root / "coupling_isaac.json")]
-    assert not root.exists()
-
-
-@pytest.mark.parametrize("args", [("--stage", "audit", "--seed", "1"),
-                                  ("--stage", "fixtures", "--steps", "3"),
-                                  ("--stage", "smoke", "--backend", "local"),
-                                  ("--stage", "report", "--allow-isaac"),
-                                  ("--stage", "coupling", "--backend", "local",
-                                   "--allow-isaac"),
-                                  ("--stage", "coupling", "--backend", "local", "--headless"),
-                                  ("--stage", "coupling"),
-                                  ("--stage", "develop", "--seed", "1")])
-def test_stage_specific_options_are_rejected_elsewhere(tmp_path, args):
+@pytest.mark.parametrize("args", [("--stage", "register-speed", "--workers", "2"),
+                                  ("--stage", "budget", "--allow-isaac"),
+                                  ("--stage", "speed", "--headless"),
+                                  ("--stage", "register-isaac-budget", "--reset-recoveries", "1"),
+                                  ("--stage", "develop")])
+def test_stage_specific_options_and_unknown_stages_are_rejected(tmp_path, args):
     done = run(*args, "--run-root", str(tmp_path / "x"))
     assert done.returncode == 2
     assert not (tmp_path / "x").exists()
 
 
-def test_fixtures_smoke_coupling_then_report_shows_g3_partial(tmp_path):
-    root = tmp_path / "run"
-    done = run("--stage", "fixtures", "--run-root", str(root))
-    assert done.returncode == 0, done.stdout + done.stderr
-    fixtures = json.loads((root / "fixtures.json").read_text())
-    assert fixtures["all_passed"] and all(c["passed"] for c in fixtures["checks"])
-
-    done = run("--stage", "smoke", "--steps", "8", "--run-root", str(root))
-    assert done.returncode == 0, done.stdout + done.stderr
-    smoke = json.loads((root / "smoke.json").read_text())
-    assert smoke["scientific_use"] is False and smoke["backend"] == "spatial_local_v12"
-    assert smoke["steps_run"] == 8 and smoke["all_finite"]
-
-    done = run("--stage", "report", "--run-root", str(root))
-    assert payload(done)["gates"]["G3"]["status"] == "not_started"
-
-    done = run("--stage", "coupling", "--backend", "local", "--run-root", str(root),
-               timeout=300)
-    assert done.returncode == 0, done.stdout + done.stderr
-    assert json.loads((root / "coupling_local.json").read_text())["local_checks_passed"]
-
-    before = sorted(p.name for p in root.iterdir())
-    report = payload(run("--stage", "report", "--run-root", str(root)))
-    assert report["gates"]["G3"]["status"] == "partial"
-    assert sorted(p.name for p in root.iterdir()) == before
-    assert not (root / LOCK_NAME).exists()
-
-
-def test_audit_writes_one_atomic_json(tmp_path):
-    root = tmp_path / "run"
-    done = run("--stage", "audit", "--run-root", str(root))
-    assert done.returncode == 0, done.stderr
-    audit = json.loads((root / "audit.json").read_text())
-    assert audit["stage"] == "audit" and not audit["dry_run"]
-    assert audit["provenance"]["git_head"]
-    assert sorted(p.name for p in root.iterdir()) == ["audit.json"]
-
-
+@needs_plans
 def test_relative_run_root_resolves_against_the_launch_directory(tmp_path):
-    done = subprocess.run(["bash", str(RUN_SH), ROUTE, "--stage", "audit", "--dry-run",
-                           "--run-root", "rel/x"], capture_output=True, text=True,
-                          timeout=180, cwd=tmp_path)
+    done = run("--stage", "register-speed", "--dry-run", "--run-root", "rel/x", cwd=tmp_path)
     assert done.returncode == 0, done.stderr
     assert payload(done)["run_root"] == str(tmp_path / "rel" / "x")
     assert not (tmp_path / "rel").exists()

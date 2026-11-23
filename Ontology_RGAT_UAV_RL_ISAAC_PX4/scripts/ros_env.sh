@@ -14,9 +14,8 @@
 # discover each other at all, so `ros2 topic list` comes back with nothing but
 # /parameter_events and /rosout and the stack looks dead when it is fine.
 #
-# This is exactly what ~/.bashrc does on this machine -- it exports
-# rmw_cyclonedds_cpp -- which is why an interactive shell needs this and the
-# run scripts, which set it themselves, do not.
+# An interactive shell whose profile exports another RMW (for example
+# rmw_cyclonedds_cpp) needs this; the run scripts set it themselves.
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
   printf 'Source this file, do not execute it:\n\n  source %s\n\n' "${BASH_SOURCE[0]}" >&2
   exit 1

@@ -2,16 +2,18 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""Common phi44 features and the 8x10 node input of spatial_current_semantics_v1 (guide 8.1).
+"""Common phi44 features (paper Sec. 3.1, eq. (2)-(3)) and the 8x10 node input of
+the eight-node graph arms.
 
 Every value is a pure function of the current 21D vector and the fixed config:
 no history, previous action, integral or simulator truth.  Raw channels are
 copied bit-exact into the first slots of their node, so raw21 is recoverable
 by name from either layout.  Every derived channel goes through the one
-bounded map ``B(x; s) = x/(|x|+s)`` with a registered SI scale, and the MLP arm
-reads the same 44 numbers the graph arms read.  Without a pad estimate the
-estimate-derived entries are the neutral 0, and the validity flags in the same
-vector say why, so a 0 never reads as alignment.
+bounded map ``B(x; s) = x/(|x|+s)`` with a registered SI scale, and the flat
+(44,) and node (8, 10) layouts carry the same 44 numbers.  Without a pad
+estimate the estimate-derived entries are the neutral 0, and the validity flags
+in the same vector say why, so a 0 never reads as alignment.  ORL regroups the
+same phi44 slots into its 19 concept nodes (``orl.py``).
 """
 from __future__ import annotations
 

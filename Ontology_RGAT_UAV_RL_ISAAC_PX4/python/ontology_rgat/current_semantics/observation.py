@@ -2,10 +2,10 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""The current 21D source observation, decoded back into physical units.
+"""The current 21D observation O_t (paper Sec. 2.1), decoded back into physical units.
 
-Every feature of the new path is a pure function of this one vector, so the
-decode is exact and strict.  The only in-vector estimate validity is the
+Every phi44 feature (paper eq. (2)) is a pure function of this one vector, so
+the decode is exact and strict.  The only in-vector estimate validity is the
 vision-age sentinel: an uninitialised pad estimate arrives as a zeroed
 estimate prefix with age 1.0, and those zeros must never read as alignment.
 """

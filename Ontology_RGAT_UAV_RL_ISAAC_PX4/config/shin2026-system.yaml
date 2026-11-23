@@ -2,11 +2,10 @@ extends: system.yaml
 
 system:
   control_hz: 10.0
-  # SITL action deadman (2026-09-21: 1.0 -> 3.0 -> 10.0). Four pairs on one stage run
-  # Isaac at ~1/8 real time, so a 0.1 s control period is ~0.85 s of wall
-  # clock and the learner's next action routinely arrived 1.0-2.0 s after the
-  # previous one; the gateway then held position "between episodes" in the
-  # middle of a flight and its replies slipped past the bridge budget. The
+  # SITL action deadman. Four pairs on one stage run Isaac at ~1/8 real time,
+  # so a 0.1 s control period is ~0.85 s of wall clock and the learner's next
+  # action can arrive 1.0-2.0 s after the previous one; a tighter deadman makes
+  # the gateway hold position "between episodes" in the middle of a flight. The
   # hardware deadman in system.yaml stays strict.
   sitl_action_timeout_s: 10.0
   # S5's photoreal mesh occasionally delays one rendered sensor callback past
@@ -103,30 +102,19 @@ benchmark:
   # fly-through and sits clear of the observed cycle. Identical for both arms.
   entry_speed_tolerance_m_s: 1.00
   entry_settle_s: 1.0
-  # Bridge budgets for the shared four-pair stage (2026-09-21), see
-  # run_shin2026_pipeline._live_config: a flight reply may take up to 6 s of
-  # wall clock before the stack is declared stalled, a rebuilt gateway gets
-  # six minutes to answer hello while Isaac reloads the stage, and a worker
-  # may recover its stack three times per episode before giving up.
-  # Raised again after run 6 (2026-09-21): at ~1/9 real time a peer pair's
-  # reset (teleport, respawn) can freeze the stage for several seconds, and a
-  # 6 s reply budget still turned that into a shared-stack rebuild.
-  # Back to 20 s. Raising this to 45 on 2026-09-24 was reasoning from a wrong
-  # premise -- that a late reply meant a stalled simulator worth waiting for.
-  # Instrumenting the gateway showed otherwise: when this timeout fires the
-  # gateway is not stalled, it has been TORN DOWN by a sibling pair worker
-  # rebuilding the shared stack, and the reply is never coming. A longer
-  # budget only makes each rebuild cost its siblings more. The bridge now
-  # abandons such an exchange as soon as it sees the rebuild, so what this
-  # number governs is the rarer case of a genuinely unresponsive gateway.
+  # Wall-clock budget for one gateway reply. On a shared stage a peer pair's
+  # reset (teleport, respawn) can freeze the stage for several seconds, so 6 s is
+  # too short. A much longer budget does not help either: when this timeout fires
+  # the gateway is usually not stalled but TORN DOWN by a sibling worker
+  # rebuilding the shared stack, and the reply is never coming. The bridge
+  # abandons such an exchange as soon as it sees the rebuild, so this number
+  # governs the rarer case of a genuinely unresponsive gateway.
   gateway_timeout_s: 20.0
   setup_timeout_s: 480.0
   # How many times one episode may be retried through an infrastructure
-  # failure before the whole run is abandoned. Three was too few for a run
-  # measured in days: 2026-09-24 the OFFBOARD heartbeat flickered on and off
-  # every ~5 s -- a fault the gateway itself classifies as recoverable SITL
-  # infrastructure -- and one episode drew it three times in a row, ending a
-  # 2016-episode run at 148. A recoverable fault must not be able to do that.
+  # failure before the whole run is abandoned. A recoverable SITL fault (for
+  # example an OFFBOARD heartbeat flickering on and off every ~5 s) can hit one
+  # episode several times in a row; it must not be able to end a long run.
   reset_recoveries: 12
   # The budget the entry gate is judged against, in *simulated* PX4 seconds.
   # Its wall-clock counterpart (external.entry_timeout) is only a hang guard.
@@ -190,14 +178,12 @@ pad:
   # default visual/empirical-data run on this curved road.
   vehicle_max_speed_m_s: 1.0
   vehicle_visual_origin_from_road_m: [0.0, 0.0, 0.31]
-  # training_random_walk_escape_burst (behaviour-cloning demonstrations,
-  # 2026-09-21): the deck's one dash starts when Isaac sees the vehicle
-  # following it -- within 0.9 m laterally, 0.5-2.5 m up, after policy
-  # handover -- and heads straight out behind the camera, so the pad leaves
-  # the frame while it is being followed. A seed-timed dash at 4-7 s caught
-  # the PD teacher still 3.6-4.4 m up and never left the frame (3 of 3
-  # flights). "timed" keeps that closed-form variant for tests. Part of the
-  # demonstration fingerprint through system.pad.
+  # training_random_walk_escape_burst: the deck's one dash starts when Isaac
+  # sees the vehicle following it -- within 0.9 m laterally, 0.5-2.5 m up, after
+  # policy handover -- and heads straight out behind the camera, so the pad
+  # leaves the frame while it is being followed. A seed-timed dash at 4-7 s
+  # fires while the vehicle is still high and the pad never leaves the frame;
+  # "timed" keeps that closed-form variant for tests.
   escape_burst_trigger: following
   deck_height_m: 0.42
   # The centreline below is sampled from the S5_CarRoad_002 mesh itself.  Its
@@ -262,10 +248,9 @@ gnss:
   enabled: false
 
 vision:
-  # The primary benchmark's perception path is a learned six-keypoint encoder,
-  # so the deck carries six fixed landmarks rather than bit-coded tags. No
-  # ArUco dictionary, marker id or cv2.aruco detector exists on this path; the
-  # legacy detector profile survives only in config/system.yaml.
+  # This profile's deck carries six fixed landmarks rather than bit-coded tags.
+  # The spatial profiles (spatial-isaac-system*.yaml) switch back to an ArUco
+  # board.
   mode: keypoint_fiducial
   # Explicitly clear the inherited legacy detector settings. config/system.yaml
   # is deep-merged, so leaving these out would silently re-introduce an ArUco
@@ -298,8 +283,7 @@ battery:
   # Use the real 3S 3500 mAh pack, vehicle and rotor specification inherited
   # from system.yaml. Each seeded episode starts with 9--55 hover seconds of
   # that physical pack remaining so energy changes within the 30 s benchmark.
-  # The gateway integrates the PX4 thrust setpoint in joules; battery risk is
-  # reward-side and is an input to the controlled R-GAT.
+  # The gateway integrates the PX4 thrust setpoint in joules.
   enabled: true
 
 px4:
@@ -318,6 +302,6 @@ px4:
     # The stock PX4 SITL pack drains from full to empty in 60 simulated
     # seconds. Airborne episode staging intentionally remains armed, so clamp
     # the simulator-only pack at full charge. The independently integrated
-    # experiment pack above still discharges, is logged, and drives R-GAT;
-    # hardware never consumes this SITL-only override.
+    # experiment pack above still discharges and is logged; hardware never
+    # consumes this SITL-only override.
     SIM_BAT_MIN_PCT: 100.0

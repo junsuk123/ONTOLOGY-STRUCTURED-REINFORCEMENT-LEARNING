@@ -16,28 +16,26 @@ BENCHMARK_SCENARIOS = {
     "training_random_walk", "straight_8mps", "linear_acceleration_wave",
     "circle", "zigzag", "u_turn", "vertical_heave_boat",
     # The training walk with one straight dash to the carrier's peak speed,
-    # for behaviour-cloning demonstrations that lose and recover the pad
-    # (isaac_sim/pad_motion.py, 2026-09-21).
+    # so the pad is lost and recovered (isaac_sim/pad_motion.py).
     "training_random_walk_escape_burst",
     # The same dash laid over a constant-velocity straight run instead of the
     # walk: the deck cruises, the vehicle settles into following it, and then
-    # it doubles its speed and leaves the frame. The CICS2026 three-arm
-    # comparison deck (2026-09-22).
+    # it doubles its speed and leaves the frame.
     "straight_escape_burst",
     # The same deck closed into an oval: two straights joined by constant-speed
     # semicircles, driven forever. Bounded by construction, so the deck needs
     # neither the arena clamp nor the inward heading steering that an open
-    # straight run does (isaac_sim/pad_motion.py, 2026-09-22).
+    # straight run does (isaac_sim/pad_motion.py).
     "straight_escape_burst_track",
-    # The three CICS2026 comparison decks: a straight line at a constant
+    # The three segmented-cruise decks: a straight line at a constant
     # heading whose speed is piecewise constant over three segments. Written in
     # the reduced 2-D study's units and scaled onto the carrier's ceiling, so
     # the fastest segment of the fastest deck is 1.00 m/s
-    # (isaac_sim/pad_motion.py, 2026-09-23).
+    # (isaac_sim/pad_motion.py).
     "segmented_cruise_slow", "segmented_cruise_medium", "segmented_cruise_fast",
     "spatial_reference_cv_ca_cv", "matlab_planar_cv_ca_cv",
 }
-# spatial_current_semantics_v1 task v5: the learner's composition draw carried in
+# spatial_current_semantics_v1: the learner's composition draw carried in
 # the name, "spatial_current_omni/1:heading:bearing:radius:a2". The gateway only
 # forwards it; the strict parse is ontology_rgat.spatial.scenarios.parse_current_omni,
 # run by Isaac's pad_motion.py, and the learner checks Isaac's acknowledgement.

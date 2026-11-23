@@ -2,7 +2,7 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""Budget-matched actor-critics of spatial_current_semantics_v1 (guide 8.3-8.4)."""
+"""Parameter-matched actor-critics of the compared policies (paper Sec. 4.2)."""
 import copy
 import math
 
@@ -139,7 +139,8 @@ def test_optimizer_groups_cover_every_trainable_parameter_exactly_once():
 # ------------------------------------------------------------- the layer
 
 def reference_layer(layer, h, spec):
-    """Per-node, per-edge loop of the registered equations, in float64."""
+    """Per-node, per-edge loop of the relational attention equations (paper eqs. (5)-(8)),
+    in float64."""
     weight, att_src, att_dst, relation_bias, bias = (
         p.detach().double() for p in (layer.weight, layer.att_src, layer.att_dst,
                                       layer.relation_bias, layer.bias))
@@ -510,21 +511,13 @@ def test_load_refuses_a_different_arm(tmp_path):
 
 
 def test_load_refuses_payloads_without_this_schema_id(tmp_path):
-    from ontology_rgat.direct_policy.contracts import make_contract
-    from ontology_rgat.direct_policy.models import DirectActorCritic
-    from ontology_rgat.direct_policy.models import save_checkpoint as direct_save
-
-    with torch.random.fork_rng():
-        direct = DirectActorCritic(make_contract(3, backend="local"), "ppo", seed=0)
-    direct_path = tmp_path / "direct.pt"
-    direct_save(direct_path, direct, training_step=0, optimizer_state={}, rng_state=None)
-    assert "schema_id" not in torch.load(direct_path, weights_only=True)
-
+    foreign = tmp_path / "foreign.pt"
+    torch.save({"model_state": model("raw_ppo").state_dict(), "metadata": {}}, foreign)
     bare = tmp_path / "bare.pt"
     torch.save(model("raw_ppo").state_dict(), bare)
     pickled = tmp_path / "pickled.pt"
     torch.save({"schema_id": contracts.SCHEMA_ID, "metadata": np.float64(1.0)}, pickled)
-    for path in (direct_path, bare, pickled):
+    for path in (foreign, bare, pickled):
         target = model("raw_ppo")
         before = state(target)
         with pytest.raises(ValueError, match=contracts.SCHEMA_ID):

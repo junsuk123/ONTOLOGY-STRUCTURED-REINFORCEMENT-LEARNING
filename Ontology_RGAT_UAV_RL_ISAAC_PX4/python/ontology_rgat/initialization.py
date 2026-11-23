@@ -119,7 +119,7 @@ def constrain_camera_visible_entry(
 # same constant as ``isaac_sim.marker_vision.R_BODY_FROM_OPTICAL``; Isaac's
 # ``aim_at_nadir`` forces the camera prim onto exactly this frame after the
 # configured down-pitch, so image +X spans the vehicle's pitch plane and image
-# +Y spans left/right. ``tests/test_shin2026_integrity.py`` asserts equality.
+# +Y spans left/right.
 R_BODY_FROM_OPTICAL_NADIR = np.array([
     [1.0, 0.0, 0.0],
     [0.0, -1.0, 0.0],

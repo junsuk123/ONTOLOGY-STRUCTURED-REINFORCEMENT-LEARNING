@@ -2,15 +2,16 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""Ontology-guided R-GAT reward shaping for UAV landing on a moving deck.
+"""Ontology-structured reinforcement learning (ORL) for UAV landing on a moving platform.
 
-The learner: everything that used to live in MATLAB. Isaac Sim owns the
-physics, PX4 owns the estimator and the attitude loop, the ROS 2 gateway owns
-the wire format, and this package owns the experiment -- the episode, the
-ontology, the R-GAT potential, PPO, the evaluation and the figures.
+Isaac Sim owns the physics, PX4 owns the estimator and the attitude loop, the
+ROS 2 gateway owns the wire format, and this package owns the experiment: the
+local training plant (``spatial``), the landing-task contract (``landing``), the
+policies with their training and evaluation (``current_semantics``), and the
+owned Isaac/PX4 stack they fly on (``stack``, ``live_stack``, ``bridge``).
 
-Entry points are the scripts one directory up: ``run_pipeline.py``,
-``run_episode.py``, ``run_hardware_policy.py`` and ``run_benchmark.py``.
+The only entry point is the repository's ``run.sh current-semantics-3d``, which
+runs ``python/run_current_semantics_3d.py``.
 """
 from __future__ import annotations
 

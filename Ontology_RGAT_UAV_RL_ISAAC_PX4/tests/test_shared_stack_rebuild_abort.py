@@ -6,14 +6,13 @@
 
 Four pair workers share one Isaac/PX4 stack. When one of them fails for real it
 cycles that stack, and the others are mid-exchange with gateways that are being
-killed. On 2026-09-24 they each waited out ``benchmark.gateway_timeout_s`` and
-then reported an infrastructure failure of their own -- the run log shows
-"Stopping gateway_0" followed immediately by two sibling timeouts, three times
-in one hour.
+killed. Without a check, each waits out ``benchmark.gateway_timeout_s`` and then
+reports an infrastructure failure of its own ("Stopping gateway_0" followed
+immediately by sibling timeouts).
 
-Instrumenting the gateway is what ruled everything else out: no wedge (its
-timers kept running and its lock was never held), no starved input, and no
-dropped datagram on any socket. The process was simply gone.
+Instrumenting the gateway ruled everything else out: no wedge (its timers kept
+running and its lock was never held), no starved input, and no dropped datagram
+on any socket. The process was simply gone.
 """
 from __future__ import annotations
 

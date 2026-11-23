@@ -13,7 +13,7 @@ holding one and the OFFBOARD heartbeat the other, the sensor callbacks that
 advance PX4's clock are what gets starved, so the simulated time the loop waits
 for arrives more slowly the harder it waits.
 
-Measured 2026-09-25 on an otherwise idle machine (Isaac 1.7 cores of 20, PX4
+Measured on an otherwise idle machine (Isaac 1.7 cores of 20, PX4
 1.5% each, GPU 3%, CPU at 4.2 of 4.7 GHz): 0.07x realtime inside an episode
 against 1.1x during the entry hover, which is the same stack with nobody
 polling it.

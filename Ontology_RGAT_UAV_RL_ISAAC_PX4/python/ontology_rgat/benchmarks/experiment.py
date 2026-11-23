@@ -12,9 +12,9 @@ from pathlib import Path
 import yaml
 
 
-# The current headline arms, the ablations of the proposed one, and the
-# retired reward-side arm -- which keeps its id so its recorded runs stay
-# attributable and can still be flown for comparison.
+# Method ids of the earlier Isaac benchmark profiles; ``paired_seed_plan``
+# refuses any other. The ORL study's arms are defined in
+# ``current_semantics.models``.
 PRIMARY_PIPELINES = ("shin_se_fixed", "shin_se_onto_rgat_state")
 REFACTORED_PIPELINES = ("ppo_vector_state", "ppo_ontology_selective_rgat")
 GRAPH_STATE_ABLATIONS = ("shin_se_onto_gat_state", "shin_se_node_pool_state")

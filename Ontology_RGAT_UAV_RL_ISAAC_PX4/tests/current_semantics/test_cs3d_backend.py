@@ -5,7 +5,7 @@
 """Backend boundary of spatial_current_semantics_v1: observer stamps, adapter trace, registry.
 
 Observer semantics are pinned on synthetic ``spatial.core.Measurement``
-samples; the backend runs on the real spatial-reference/12 LocalBackend.
+samples; the backend runs on the real local-plant ``LocalBackend``.
 Nothing here constructs IsaacBackend or PX4Bridge, and make_isaac_backend is
 only ever called without allow_isaac=True.
 """
@@ -28,9 +28,8 @@ import yaml
 
 from ontology_rgat.current_semantics import backend
 from ontology_rgat.current_semantics.backend import (
-    BACKENDS, CALIBRATION_GAPS, FLIGHT_SCHEMA, CurrentObserver, CurrentSpatialBackend,
-    LocalOpticalCadence, config_task_label, local_plant_config, make_isaac_backend,
-    make_local_backend, policy_action, require_training_backend)
+    FLIGHT_SCHEMA, CurrentObserver, CurrentSpatialBackend, LocalOpticalCadence,
+    config_task_label, local_plant_config, make_isaac_backend, make_local_backend, policy_action)
 from ontology_rgat.current_semantics.contracts import (DEFAULT_CONFIG_PATH, OBSERVATION_NAMES,
                                                        contract_manifest, load_config)
 from ontology_rgat.current_semantics.observation import decode
@@ -209,7 +208,7 @@ def test_local_backend_reset_reports_the_contract_and_the_registered_task():
     vector, info = local.reset(SEED)
     assert vector.shape == (21,) and np.all(np.isfinite(vector))
     assert info["backend"] == "spatial_local_v12" and info["flight"] == LocalBackend.name
-    assert info["scientific_use"] is False and info["difficulty"] == 1.0
+    assert info["difficulty"] == 1.0
     assert info["task"] == config_task_label(CONFIG)
     assert info["task"]["evaluator"] == "spatial.environment.Evaluator"
     assert info["handover_wait_decisions"] >= 0
@@ -293,7 +292,7 @@ def test_contact_and_horizon_end_the_episode_with_the_registered_verdict():
     components = step.info["reward_components"]
     assert set(components) == {"potential", "shaping", "cost", "tilt", "terminal",
                                "reference_reward"}
-    # task v4: the Evaluator's verdict and terminal table, the common dense reward.
+    # The task: the Evaluator's verdict and terminal table, the common dense reward.
     assert components["terminal"] == -40.0
     assert step.reward == pytest.approx(components["shaping"] + components["cost"]
                                         + components["tilt"] - 40.0)
@@ -323,8 +322,8 @@ def test_the_policy_action_is_costed_and_the_reward_telescopes():
     assert q["cost"] == pytest.approx(-reward.time_cost_per_s * quiet.transition_s)
     assert b["cost"] == pytest.approx(-(reward.time_cost_per_s + reward.control_cost_per_s)
                                       * busy.transition_s)
-    # /4: no command-change term; a jump from the hover to full authority costs only
-    # its control cost (exploration noise must not pay a per-decision tax).
+    # No command-change term: a jump from the hover to full authority costs only its
+    # control cost (exploration noise must not pay a per-decision tax).
     assert "command_change" not in b
     # The undiscounted potential difference telescopes over consecutive steps.
     assert b["shaping"] == pytest.approx(b["potential"] - q["potential"])
@@ -361,7 +360,6 @@ def test_registered_cadence_is_identity_until_isaac_measures_the_frame_rate():
               for _ in range(10)]
     local.close()
     assert max(frames) == 2  # the plant's own 20 Hz, untouched
-    assert "rejected" in CALIBRATION_GAPS["optical_update_rate"].status
 
 
 def test_step_refuses_malformed_actions_and_needs_a_reset():
@@ -387,23 +385,20 @@ def _variant(tmp_path, edit):
 
 def test_backend_refuses_any_flight_but_the_registered_v12_plant(tmp_path):
     flight = LocalBackend(local_plant_config(CONFIG))
-    with pytest.raises(RuntimeError, match="always visible"):
-        CurrentSpatialBackend(flight, CONFIG, name="direct_local_toy", scientific=False)
-    with pytest.raises(ValueError, match="unknown backend"):
-        CurrentSpatialBackend(flight, CONFIG, name="reduced_3d", scientific=False)
+    with pytest.raises(ValueError, match="unknown flight backend"):
+        CurrentSpatialBackend(flight, CONFIG, name="reduced_3d")
     with pytest.raises(TypeError, match="IsaacBackend"):
-        CurrentSpatialBackend(flight, CONFIG, name="isaac_v12", scientific=False)
-    assert CurrentSpatialBackend(flight, CONFIG, name="spatial_local_v12",
-                                 scientific=True).scientific is True
+        CurrentSpatialBackend(flight, CONFIG, name="isaac_v12")
+    assert CurrentSpatialBackend(flight, CONFIG, name="spatial_local_v12").name \
+        == "spatial_local_v12"
     for cfg in (SpatialConfig(schema="spatial-reference/11"),
                 SpatialConfig(schema=FLIGHT_SCHEMA),
                 replace(local_plant_config(CONFIG), camera_dt=0.1)):
         with pytest.raises(ValueError, match="registered"):
-            CurrentSpatialBackend(LocalBackend(cfg), CONFIG, name="spatial_local_v12",
-                                  scientific=False)
+            CurrentSpatialBackend(LocalBackend(cfg), CONFIG, name="spatial_local_v12")
     rescaled = _variant(tmp_path, lambda d: d["action"].update(maximum_m_s2=[2.0, 2.5, 2.0]))
     with pytest.raises(ValueError, match="rescale"):
-        CurrentSpatialBackend(flight, rescaled, name="spatial_local_v12", scientific=False)
+        CurrentSpatialBackend(flight, rescaled, name="spatial_local_v12")
 
 
 def test_adapter_tilt_is_registered_with_the_action_and_hashed_there(tmp_path):
@@ -463,44 +458,6 @@ def test_local_backend_imports_no_isaac_ros_or_px4_runtime():
 
 # ------------------------------------------------------------------ registry
 
-def test_registry_statuses_and_training_refusals():
-    assert set(BACKENDS) == {"spatial_local_v12", "isaac_v12", "direct_local_toy"}
-    assert BACKENDS["direct_local_toy"].status == "refused"
-    assert BACKENDS["isaac_v12"].status == "requires_allow_isaac"
-    assert BACKENDS["spatial_local_v12"].status == "g3_passed"
-    with pytest.raises(RuntimeError, match="always visible"):
-        require_training_backend("direct_local_toy", allow_pending_g3=True)
-    with pytest.raises(RuntimeError, match="not a training backend"):
-        require_training_backend("isaac_v12", allow_pending_g3=True)
-    # Promoted on the 2026-10-28 G3 pass: training needs no pending-G3 escape any more.
-    assert require_training_backend("spatial_local_v12") is BACKENDS["spatial_local_v12"]
-    assert "coupling_isaac.json" in backend.G3_STATUS
-    with pytest.raises(ValueError, match="unknown backend"):
-        require_training_backend("reduced_3d", allow_pending_g3=True)
-
-
-def test_calibration_gaps_register_the_audited_items_with_local_numbers_from_the_plant():
-    audited = {"optical_update_rate", "touchdown_body_height", "entry_yaw", "board_yaw",
-               "own_navigation", "optical_position_noise"}
-    assert audited <= set(CALIBRATION_GAPS)
-    assert set(BACKENDS["spatial_local_v12"].calibration_gaps) == set(CALIBRATION_GAPS)
-    plant = SpatialConfig(schema=FLIGHT_SCHEMA)
-    rate = CALIBRATION_GAPS["optical_update_rate"].numbers
-    assert rate["local_camera_dt_s"] == plant.camera_dt
-    assert rate["local_transport_s"] == plant.camera_transport_delay
-    touchdown = CALIBRATION_GAPS["touchdown_body_height"].numbers
-    assert touchdown["local_contact_body_height_m"] == plant.touchdown_height
-    assert touchdown["isaac_first_contact_body_height_m"] == (0.0636, 0.0732)
-    assert touchdown["isaac_median_first_contact_body_height_m"] \
-        == CONFIG.local_plant.contact_height_m
-    calibrated = {"touchdown_body_height", "handover_detection"}
-    for name, gap in CALIBRATION_GAPS.items():
-        prefix = "calibrated in the training plant" if name in calibrated else "open G3 item"
-        assert gap.status.startswith(prefix), name
-        assert gap.evidence
-        json.dumps(gap.to_dict(), allow_nan=False)
-
-
 def _mutable_module_values(module: ModuleType):
     for name, value in vars(module).items():
         if name.startswith("__") or isinstance(value, (ModuleType, type)) or callable(value):
@@ -511,10 +468,8 @@ def _mutable_module_values(module: ModuleType):
             yield name
 
 
-def test_backend_and_coupling_hold_no_module_level_mutable_registries():
-    from ontology_rgat.current_semantics import coupling
-    for module in (backend, coupling):
-        assert list(_mutable_module_values(module)) == [], module.__name__
+def test_backend_holds_no_module_level_mutable_registry():
+    assert list(_mutable_module_values(backend)) == []
 
 
 def _without_blackout(randomization):
@@ -552,8 +507,7 @@ def test_the_handover_own_state_error_is_training_only_and_decays():
     from ontology_rgat.current_semantics.backend import CurrentSpatialBackend
     with pytest.raises(ValueError, match="local plant only"):
         CurrentSpatialBackend.__init__(object.__new__(CurrentSpatialBackend), plain.flight,
-                                       CONFIG, name="isaac_v12", scientific=False,
-                                       randomization=randomization)
+                                       CONFIG, name="isaac_v12", randomization=randomization)
 
 
 def test_the_vision_blackout_withholds_frames_only_inside_its_window():

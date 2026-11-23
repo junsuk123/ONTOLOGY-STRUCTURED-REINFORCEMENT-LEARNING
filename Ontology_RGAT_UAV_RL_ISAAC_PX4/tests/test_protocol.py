@@ -1248,9 +1248,9 @@ def test_failsafe_detail_names_a_lone_attitude_failure_separately():
     ``fd_critical_failure`` is PX4's attitude failure detector and on this
     airframe nothing else can raise it: FAILURE_ALT is unused and FAILURE_EXT
     needs an ATS receiver SITL does not have. Classified only as a hard input
-    it aborted the whole run, because ``collect_episode_resilient`` re-raises a
-    non-recoverable failsafe without spending a retry -- so a flipped drone
-    ended a PPO run on 2026-09-23 instead of scoring one crashed episode.
+    it would abort the whole run, because a non-recoverable failsafe is
+    re-raised without spending a retry -- so a flipped drone would end a PPO
+    run instead of scoring one crashed episode.
     """
     tipped = failsafe_detail(type("Flags", (), {
         # The three flags autonomous SITL publishes regardless.

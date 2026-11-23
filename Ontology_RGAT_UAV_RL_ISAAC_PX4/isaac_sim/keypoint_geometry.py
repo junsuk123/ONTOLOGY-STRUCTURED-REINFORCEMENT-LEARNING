@@ -6,8 +6,7 @@
 """Simulator-side geometry of the six-keypoint landing pad.
 
 Isaac is **not** imported here, so every quantity in this module is testable
-without a simulator and is shared verbatim by the learner, the pretraining
-label generator and the stage builder.
+without a simulator and is shared verbatim by the stage builder and the tests.
 
 Provenance contract
 -------------------
@@ -15,11 +14,10 @@ Everything this module returns is *simulator truth*.  It is admissible only as
 
 * ``training-label-only``  -- supervised six-keypoint targets,
 * ``initialization-only``  -- the episode entry-visibility gate,
-* ``evaluation-only``      -- geometric FOV metrics and R-GAT labels.
+* ``evaluation-only``      -- geometric FOV metrics.
 
 It must never be concatenated into the PPO actor observation, and it must
-never enter the online R-GAT graph (see ``rgat/fov_graph.py``, whose only
-constructor argument is a visual-only :class:`FOVSemanticObservation`).
+never enter a policy's graph.
 
 Frames
 ------

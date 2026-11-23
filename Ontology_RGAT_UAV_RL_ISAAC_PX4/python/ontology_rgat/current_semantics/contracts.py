@@ -2,14 +2,13 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""Registered contract of the current-observation 3D landing path.
+"""Registered contract of the current-observation 3D landing task (paper Sec. 2-4).
 
-One module holds what the new path may read and how it is scaled: the 21D
-source channels (built from the direct-policy registry, never restated), the
-nominal v12 camera, the provisional contact definitions, the action and the
-budget-matched model design.  Hashes are split so a calibration or feature
-change is never mistaken for a model change, and the identifiers are not
-shared with any older route.
+One module holds what the policy may read and how it is scaled: the 21D
+observation channels (built from the direct-policy registry, never restated),
+the nominal nadir camera, the contact definitions, the action, the task and
+reward, and the budget-matched model design.  Hashes are split so a calibration
+or feature change is never mistaken for a model change.
 """
 from __future__ import annotations
 
@@ -33,12 +32,7 @@ from ..direct_policy.contracts import SPATIAL_FIELDS, digest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "current_semantics" / "spatial_view_contact_v1.yaml"
-# The config of each task version (task v6: held-out relative class, G4 pilot 8).
-TASK_CONFIG_PATHS = MappingProxyType({
-    "spatial-current-task/5": DEFAULT_CONFIG_PATH,
-    "spatial-current-task/6": DEFAULT_CONFIG_PATH.with_name("spatial_view_contact_v2.yaml"),
-    "spatial-current-task/7": DEFAULT_CONFIG_PATH.with_name("spatial_view_contact_v3.yaml")})
-
+# Source provenance, recorded verbatim in every contract manifest.
 BASELINE_3D_SHA = "cab3dd2123c7eee3968a8c00753f2ba29d55fe71"
 PROVENANCE_2D = MappingProxyType(dict(
     remote_main="d438a7d4096d5b186c731c894306754aa5ab628d",
@@ -106,14 +100,13 @@ _CHANNEL_SEMANTICS = {
 }
 TRANSFORM_BY_NAME = MappingProxyType({name: spec[1] for name, spec in _CHANNEL_SEMANTICS.items()})
 
-# spatial-current-observation/2 (2026-10-28: reshape the common
-# observation so PPO can learn without BC). Same 21 channels, order and rules;
-# only the signed position/velocity scales change, to the landing regime. The
-# direct-policy source scales (3 m, 8 m, 10 m/s, 1.5 m/s) put the 0.30 m/s
-# touchdown limit at 0.03 of a relative-velocity channel and a 0.2 m height at
-# 0.025, so the raw actor and the COMMON raw21 critic needed ~10x larger weights
-# before a landing-relevant difference moved their output; the derived phi44
-# approach features already use 1 m and 1 m/s. Rates and ages keep their scales.
+# Same 21 channels, order and rules as the direct-policy source; only the signed
+# position/velocity scales change, to the landing regime. The source scales
+# (3 m, 8 m, 10 m/s, 1.5 m/s) put the 0.30 m/s touchdown limit at 0.03 of a
+# relative-velocity channel and a 0.2 m height at 0.025, so the raw actor and the
+# COMMON raw21 critic would need ~10x larger weights before a landing-relevant
+# difference moved their output; the derived phi44 approach features already use
+# 1 m and 1 m/s. Rates and ages keep their scales.
 OBSERVATION_SCALE_OVERRIDES = MappingProxyType({
     "relative_x": 1.0, "relative_y": 1.0, "relative_height": 2.0,
     "relative_vx": 1.0, "relative_vy": 1.0, "ugv_vx": 1.0, "ugv_vy": 1.0, "drone_vz": 1.0})
@@ -159,16 +152,15 @@ if any(TRANSFORM_BY_NAME[name] != "signed" for name in OBSERVATION_SCALE_OVERRID
     raise AssertionError("only signed channels may be rescaled")
 
 
-# spatial-current-observation/3 (2026-10-29): the pad track
-# RE-ACQUIRES. The reference ABG track initialises the pad velocity to the own
-# velocity and corrects it by 0.02/gap per frame, so after the Isaac handover
-# kick its prediction drifts past the innovation gate (max(4 sigma, 0.25 m)) and
-# every later detection is rejected: 8 of 14 missed approaches in isaac-eval/2
-# were such lockouts with the pad well inside the camera footprint
-# (G0_G4_STATUS_KO.md 10.8). After this many CONSECUTIVE fresh detections the
-# track rejected, it restarts from them: position = their least-squares line at
-# the decision time, velocity = its slope (level ground), sigma = a fresh track's.
-# Nothing changes while the track accepts frames.
+# The pad track RE-ACQUIRES. The reference alpha-beta-gamma (ABG) track
+# initialises the pad velocity to the own velocity and corrects it by 0.02/gap
+# per frame, so after an own-state transient at handover its prediction can drift
+# past the innovation gate (max(4 sigma, 0.25 m)) and reject every later
+# detection, although the pad is well inside the camera footprint. After this
+# many CONSECUTIVE fresh detections the track rejected, it restarts from them:
+# position = their least-squares line at the decision time, velocity = its slope
+# (level ground), sigma = a fresh track's. Nothing changes while the track
+# accepts frames.
 TRACK_REACQUIRE_AFTER_REJECTIONS = 3
 TRACK_REACQUIRE_RULE = (
     "after TRACK_REACQUIRE_AFTER_REJECTIONS consecutive fresh detections (the track's own "
@@ -179,8 +171,9 @@ TRACK_REACQUIRE_RULE = (
 
 
 def observation_manifest(navigation: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    """The registered /3 manifest; with ``navigation`` (navigation.LiveNavigation
-    .manifest_part()) the opt-in live-navigation profile /4, hashed apart."""
+    """The registered observation manifest (``OBSERVATION_VERSION``); an optional
+    ``navigation`` profile is recorded under its own version and so hashed apart
+    (``load_config`` refuses configs that carry one)."""
     manifest = _registered_observation_manifest()
     if navigation is None:
         return manifest
@@ -216,8 +209,9 @@ def _registered_observation_manifest() -> dict[str, Any]:
 DEPLOYMENT_PROFILE = "spatial-reference/12"
 DEPLOYMENT_PROFILE_SHA256 = "af605e2beac683ede42805cf4e858a2ec32fa3501324ecf05381426174d72e18"
 _PROFILE_FILES = MappingProxyType({"spatial-reference/12": "config/spatial-isaac-system-v12.yaml"})
-# Kit logs of all 31 v12 Isaac runs (2026-10-10..13) record the as-flown camera:
-# fx 320, optical axes in body diag(1,-1,-1), mount (0, 0, -0.1598) m.
+# Isaac Sim's Kit logs record the as-flown camera, which the nominal formula
+# below reproduces: fx 320, optical axes in body diag(1,-1,-1), mount
+# (0, 0, -0.1598) m.
 CALIBRATION_STATUS = ("nominal formula; equals the as-flown renderer record (fx 320, optical "
                       "axes diag(1,-1,-1), mount -0.1598 m) in 31 v12 Kit logs "
                       "2026-10-10..13; the in-plane rotation is not asserted by code")
@@ -393,16 +387,15 @@ nominal_v12 = CameraCalibration.nominal_v12
 def contact_tilt_rad(roll, pitch):
     """Thrust-axis angle from vertical, ``acos(cos(roll)cos(pitch))``.
 
-    Provisional until G2.  It is the ``settled`` tilt of spatial/safety.py;
+    It is the ``settled`` tilt of spatial/safety.py;
     ``direct_policy.reward.classify_terminal`` uses ``norm(roll, pitch)``
-    instead.  Features and the future evaluator import this one so the two
-    definitions cannot mix.
+    instead.  Features import this one so the two definitions cannot mix.
     """
     return np.arccos(np.clip(np.cos(roll) * np.cos(pitch), -1.0, 1.0))
 
 
 def contact_rate_rad_s(p, q):
-    """Body roll/pitch rate norm, the ``settled`` rate of spatial/safety.py (provisional)."""
+    """Body roll/pitch rate norm, the ``settled`` rate of spatial/safety.py."""
     return np.hypot(p, q)
 
 
@@ -469,12 +462,11 @@ class ActionContract:
         return np.asarray(self.maximum_m_s2, dtype=np.float64)
 
 
-# ----------------------------------------------------------------------- G3
+# ------------------------------------------------ g3: implementation checks
 
-# SOURCE_AUDIT_KO.md section 3 lists the seeds with recorded local use.  Three
-# entries are open-ended there ("12000+", "100000+", "1000001+"); each is
-# closed at the block its generating code reaches, so a G3 pilot seed can be
-# checked against every one.  (name, first, last, where the bound comes from)
+# Seed ranges with recorded earlier use, so that no check or protocol seed
+# reuses one.  Open-ended ranges are closed at the block their generating code
+# reaches.  (name, first, last, where the bound comes from)
 AUDITED_SEED_RANGES = (
     ("2d_train", 291, 465, "audit section 3"),
     ("2d_environment", 9001, 9300, "audit section 3"),
@@ -550,10 +542,10 @@ class G3LocalConfig:
 
 @dataclass(frozen=True)
 class G3IsaacConfig:
-    """The Isaac half: the local probe flights on a few pilot seeds through the
+    """The Isaac half: the local probe flights on a few check seeds through the
     owned Isaac/PX4 stack.  ``axis_sign_min_abs_correlation`` is the floor on
-    corr(sin pitch, +a_x) and -corr(sin roll, +a_y); the audit measured 0.686 and
-    0.966 on earlier Isaac flights (SOURCE_AUDIT_KO.md section 1)."""
+    corr(sin pitch, +a_x) and -corr(sin roll, +a_y), i.e. on the sign of the
+    attitude response to a commanded ENU acceleration."""
     seeds: tuple[int, ...]
     axis_sign_min_abs_correlation: float
 
@@ -567,34 +559,11 @@ class G3Config:
     audited_seed_ranges: tuple[tuple[Any, ...], ...] = AUDITED_SEED_RANGES
 
 
-# ---------------------------------------------------------------------- G4
+# ----------------------------------------------- g4: the training recipe
 
-# Pilot 1 (time-ramped curriculum, 300 updates) and pilot 2 (success-gated
-# curriculum, 600 updates) are archived under results/.../g4_pilot_v1 and
-# g4_pilot_v2 with their config snapshots; both verdicts were G4 failed. Pilot 3
-# (task v2 + observation v2) PASSED and is archived in g4_pilot_v3 with the two
-# Isaac evaluations of its checkpoints (isaac_eval_v1, isaac_eval_v2). Pilot 4
-# (observation/3) and pilot 5 (reward /3 + handover own-state error) PASSED and are
-# archived in g4_pilot_v4 / g4_pilot_v5 with isaac_eval_v3 / isaac_eval_v4. Pilot 6
-# adds reward /4 (lost-view climb, no command-change cost) and the vision blackout,
-# archived in g4_pilot_v6 with isaac_eval_v5. Pilot 7 re-checks learnability on task
-# v5 (omnidirectional scenario, held-out composition) before development.
-G4_PROTOCOL = "g4-pilot/7"
-# Pilot 8 (2026-11-01, user "1 -> delete", "2. go") checks learnability on task v6
-# (a held-out relative-geometry class) and DELETES the handover own-state error: it
-# imitated Isaac's handover transient, which was the VN-100 clip / PX4 int16 wrap bug
-# (G0_G4_STATUS_KO.md 16), not a physical phenomenon.  It lives in its own config
-# (spatial_view_contact_v2.yaml) and run root, so pilot 7, development/1 and every
-# Isaac flight of its models keep their registrations.
-# Pilot 8 held out the fleeing class and FAILED the hardness rule declared before it
-# trained (Raw 0.922 on the unseen class vs 0.969 nominal, gap 4.7 < 10 pp; archived in
-# the task-v6 root's g4_pilot_v8/).  Pilot 9 is the one declared fallback: the same task
-# version holding out the approaching class instead.
-# Pilot 9 failed too (Raw 0.984 unseen vs 0.938 nominal).  Pilot 10 (2026-11-02, user
-# "a") checks learnability on task v7 (scenario/3: a fast pad starting near the frame
-# edge, where the tilt -> image-axis coupling decides the outcome).
+# Accepted ``g4_pilot.protocol`` names; the base config uses g4-pilot/7.
 G4_PROTOCOLS = ("g4-pilot/7", "g4-pilot/8", "g4-pilot/9", "g4-pilot/10")
-# The one task each pilot protocol may be paired with.
+# The one task version each protocol may be paired with.
 G4_TASK = MappingProxyType({"g4-pilot/7": "spatial-current-task/5",
                             "g4-pilot/8": "spatial-current-task/6",
                             "g4-pilot/9": "spatial-current-task/6",
@@ -602,8 +571,8 @@ G4_TASK = MappingProxyType({"g4-pilot/7": "spatial-current-task/5",
 
 @dataclass(frozen=True)
 class PPOSettings:
-    """Guide 8.3's common PPO: clipped surrogate on the latent Gaussian, common raw
-    critic, GAE on exp(-dt/tau) of the actual transition, post-step KL guard."""
+    """Common PPO settings (paper Sec. 4.1): clipped surrogate on the latent Gaussian,
+    common raw critic, GAE on exp(-dt/tau) of the actual transition, post-step KL guard."""
     epochs: int
     minibatch: int
     clip: float
@@ -617,17 +586,17 @@ class PPOSettings:
 
 @dataclass(frozen=True)
 class G4Criteria:
-    """Registered before the pilot ran: on the held-out test seeds, per model seed."""
+    """Learnability-check thresholds on the held-out test seeds, per model seed."""
     deterministic_success_min: float
     sampled_success_min: float
 
 
 @dataclass(frozen=True)
 class SuccessGatedCurriculum:
-    """Training-only difficulty that follows learning: promote by ``step`` once the
-    sampled training success over the last ``window_updates`` updates at the current
-    difficulty reaches ``promote_at_success``; never demote.  Pilot 1's time ramp
-    reached 0.6 before the policy had stopped drifting (G0_G4_STATUS_KO.md section 9)."""
+    """Training-only difficulty that follows learning (paper Sec. 4.1): promote by
+    ``step`` once the sampled training success over the last ``window_updates``
+    updates at the current difficulty reaches ``promote_at_success``; never demote.
+    Unlike a time ramp, it cannot raise the difficulty while the policy still drifts."""
     start_difficulty: float
     step: float
     window_updates: int
@@ -636,14 +605,12 @@ class SuccessGatedCurriculum:
 
 @dataclass(frozen=True)
 class HandoverOwnStateError:
-    """Training-only randomisation (pilot 5, 2026-10-29): right after handover
+    """Training-only randomisation of the own-state estimate right after handover:
     the own velocity the observer receives carries e0 * exp(-t/tau) and the own
-    position (and the pose paired with each image) its integral, as Isaac's EKF
-    did after the handover kick (G0_G4_STATUS_KO.md 10.7: +-0.6 m/s between two
-    decisions, relative velocity of the wrong sign for 0.2-0.4 s).  e0: uniform
-    horizontal direction with magnitude U(0, horizontal_max), vertical
-    U(-vertical_max, vertical_max); tau U(tau_min, tau_max).  Validation and test
-    never carry it."""
+    position (and the pose paired with each image) its integral, like an EKF
+    transient after the handover perturbation.  e0: uniform horizontal direction
+    with magnitude U(0, horizontal_max), vertical U(-vertical_max, vertical_max);
+    tau U(tau_min, tau_max).  Validation and test never carry it."""
     horizontal_max_m_s: float
     vertical_max_m_s: float
     tau_min_s: float
@@ -652,15 +619,13 @@ class HandoverOwnStateError:
 
 @dataclass(frozen=True)
 class VisionBlackout:
-    """Training-only randomisation (pilot 6, 2026-10-29): with ``probability``
-    per training episode the observer receives no optical frame for a window of
-    U(duration_min, duration_max) s starting U(start_min, start_max) s after
-    handover, so the policy meets a stale track at altitude.  The trained policies
-    almost never lost the pad there on the local plant (0-5 of 48 episodes,
-    <= 2 % of decisions, pilot6_design_checks), while every late Isaac failure on
-    record began that way (G0_G4_STATUS_KO.md 12.4-12.5); a reward for that state
-    teaches nothing unless training visits it.  Plant, truth and verdict are
-    untouched; validation, test and Isaac never carry it."""
+    """Training-only randomisation: with ``probability`` per training episode the
+    observer receives no optical frame for a window of U(duration_min,
+    duration_max) s starting U(start_min, start_max) s after handover, so the
+    policy meets a stale track at altitude.  Trained policies rarely lose the pad
+    there on their own, and the reward for that state (``LostView``) teaches
+    nothing unless training visits it.  Plant, truth and verdict are untouched;
+    validation, test and Isaac never carry it."""
     probability: float
     start_min_s: float
     start_max_s: float
@@ -671,15 +636,18 @@ class VisionBlackout:
 @dataclass(frozen=True)
 class TrainingRandomization:
     """Everything training episodes carry that validation, test and Isaac do not.
-    ``handover_own_state_error`` is None from g4-pilot/8 on (deleted)."""
+    ``handover_own_state_error`` is None under every protocol but g4-pilot/7."""
     handover_own_state_error: HandoverOwnStateError | None
     vision_blackout: VisionBlackout
 
 
 @dataclass(frozen=True)
 class G4PilotConfig:
-    """Guide 10 G4: one common-PPO learnability pilot on the Raw arm, judged on
-    both the deterministic and the sampled policy."""
+    """The training recipe shared by every arm (paper Sec. 4.1): PPO settings,
+    curriculum, episodes per update, seeds and training randomisation, plus a
+    learnability check of ``arm`` judged on both the deterministic and the
+    sampled policy.  The study plans reuse it with their own arms, seeds and
+    budgets."""
     protocol: str
     arm: str
     model_seeds: tuple[int, ...]
@@ -701,20 +669,14 @@ class G4PilotConfig:
                 + update * self.episodes_per_update + episode)
 
 
-# isaac-eval/1 (seeds 994001-994010) failed its criterion and those seeds then
-# served the traced diagnosis (G0_G4_STATUS_KO.md 10.6-10.7); /2 re-flew the same
-# pilot-3 checkpoints on 994011-994020, whose traces then shaped observation/3.
-# Both are archived (results/.../isaac_eval_v1, _v2). /3 flew the pilot-4 and /4 the
-# pilot-5 checkpoints (isaac_eval_v3, _v4); /5 flies the pilot-6 checkpoints on
-# fresh seeds.
+# The one accepted ``isaac_eval.protocol``.
 ISAAC_EVAL_PROTOCOL = "isaac-eval/5"
 
 
 @dataclass(frozen=True)
 class IsaacEvalConfig:
-    """The selected G4 checkpoints flown on Isaac/PX4 (design decision 2026-10-28:
-    every selected-checkpoint evaluation runs on Isaac).  Deterministic policy,
-    the same seeds for every checkpoint, criterion registered before the flight."""
+    """Isaac/PX4 check of selected checkpoints: deterministic policy, the same
+    seeds for every checkpoint, criterion fixed before the flight."""
     protocol: str
     seeds: tuple[int, ...]
     deterministic_success_min: float
@@ -723,17 +685,18 @@ class IsaacEvalConfig:
 # -------------------------------------------------------------------- task
 
 TASK_VERSION = "spatial-current-task/5"
-# Task v6 (2026-11-01) is task v5 with scenario/2 (a held-out relative-geometry class);
-# reward, verdict and plant are unchanged.
+# The task version each scenario version (scenario.py) belongs to; the base config
+# uses scenario/1, i.e. TASK_VERSION.
 SCENARIO_TASK = MappingProxyType({"spatial-current-scenario/1": TASK_VERSION,
                                   "spatial-current-scenario/2": "spatial-current-task/6",
                                   "spatial-current-scenario/3": "spatial-current-task/7"})
 TASK_EVALUATOR = "spatial.environment.Evaluator"
 REWARD_VERSION = "spatial-current-reward/4"
-# What the task scores, stated for the manifest. The VERDICT and the terminal
-# table are the spatial-reference/12 Evaluator's, unchanged (its constants are
-# read from landing/terminal.py and the flight's SpatialConfig, never restated).
-# The dense part is this path's common reward (reward.CommonRewardFunction).
+# What the task scores, stated for the manifest. The VERDICT (paper Sec. 2.1) and
+# the terminal table are the spatial-reference/12 Evaluator's, unchanged (its
+# constants are read from landing/terminal.py and the flight's SpatialConfig, never
+# restated). The dense part is the common reward (reward.CommonRewardFunction,
+# paper eq. (14)-(15)).
 TASK_DEFINITION = MappingProxyType({
     "verdict": ("spatial-reference/12 Evaluator.evaluate unchanged: the status of every "
                 "decision (SUCCESS / UNSAFE_CONTACT / MISSED_PAD_CONTACT / "
@@ -775,19 +738,16 @@ TASK_DEFINITION = MappingProxyType({
 
 @dataclass(frozen=True)
 class LostView:
-    """/4 (2026-10-29): what the field asks once the policy has not seen the pad
-    for a while.  Past ``after_s`` of vision age (fully at ``full_after_s``) the
+    """What the field asks once the policy has not seen the pad for a while (paper
+    Fig. 4c).  Past ``after_s`` of vision age (fully at ``full_after_s``) the
     vertical demand turns from the sink to a climb toward ``search_height_m`` above
     the contact height, where the camera footprint is wide again, except in the
     blind last stretch of a landing: below ``terminal_height_m`` and within
     ``terminal_radius_m`` of the pad centre the sink continues, both edges ramped
-    over ``ramp_m``.  The age is the observation's own vision age (decision time
-    minus the last accepted capture), so the demand is a function of what the policy
-    sees.  Sized on measurements (pilot6_design_checks): every pilot-4/-5 local
-    landing goes blind below 0.43 m within 0.56 m of the centre, and over the 60
-    recorded Isaac episodes the weight reached 0.5 in none of the 36 landings and
-    in all 10 late envelope violations (the lost-pad failures), 4.3-15.9 s before
-    each ended."""
+    over ``ramp_m``.  That stretch is exempt because near touchdown the pad leaves
+    the camera footprint by proximity, not because the approach failed.  The age is
+    the observation's own vision age (decision time minus the last accepted
+    capture), so the demand is a function of what the policy sees."""
     after_s: float
     full_after_s: float
     climb_speed_m_s: float
@@ -800,7 +760,8 @@ class LostView:
 
 @dataclass(frozen=True)
 class VelocityField:
-    """The approach the dense reward points along (reward.desired_velocity)."""
+    """The approach the dense reward points along: v_des of paper eq. (14)
+    (reward.desired_velocity)."""
     lateral_gain_per_s: float
     lateral_speed_max_m_s: float
     descent_gain_per_s: float
@@ -813,7 +774,8 @@ class VelocityField:
 
 @dataclass(frozen=True)
 class CommonReward:
-    """The dense reward every arm trains on (truth plus the policy's own vision age)."""
+    """The dense reward every arm trains on (paper eq. (14)-(15); truth plus the
+    policy's own vision age)."""
     distance_weight_per_m: float
     velocity_weight_per_m_s: float
     time_cost_per_s: float
@@ -826,8 +788,8 @@ class CommonReward:
 
 @dataclass(frozen=True)
 class TaskContract:
-    """Guide 9.3: one reward and termination function for every arm, and (task v5) the
-    one scenario distribution every arm trains and is tested on (scenario.py)."""
+    """One reward and termination function for every arm, and the one scenario
+    distribution every arm trains and is tested on (scenario.py)."""
     evaluator: str
     supervisor: str
     unsafe_penalty: str
@@ -845,8 +807,8 @@ class OpticalCadence:
 
 @dataclass(frozen=True)
 class LocalPlant:
-    """The training plant: spatial-reference/12 LocalBackend with three Isaac-measured
-    calibrations (SOURCE_AUDIT_KO.md section 2; G0_G4_STATUS_KO.md section 5)."""
+    """The training plant ("local plant", paper Sec. 4.2): the spatial-reference/12
+    LocalBackend with calibrations measured on Isaac/PX4 flights."""
     contact_height_m: float
     handover_wait_max_s: float
     optical_cadence: OpticalCadence
@@ -889,9 +851,8 @@ class CurrentSemanticsConfig:
     local_plant: LocalPlant
     g4: G4PilotConfig
     isaac_eval: IsaacEvalConfig
-    # Optional ``navigation`` section (navigation.NavigationProfile): observation profile
-    # /4 with live own navigation.  None is the registered /3, and a config without the
-    # section loads, hashes and runs exactly as before it existed.
+    # Always None: ``load_config`` refuses a ``navigation`` section (``_navigation``),
+    # so own state comes from the base navigation contract (PX4 EKF2 in Isaac).
     navigation: Any = None
 
     @property
@@ -987,8 +948,8 @@ def _seed_list(value: Any, where: str) -> tuple[int, ...]:
 
 
 def _randomization(data: Any, protocol: str) -> TrainingRandomization:
-    # Pilot 7 carries pilot 5's handover own-state error; pilot 8 deleted it, and a
-    # pilot-8 config that still names it is refused rather than silently ignored.
+    # Only g4-pilot/7 carries the handover own-state error; a config of another
+    # protocol that still names it is refused rather than silently ignored.
     keys = (("handover_own_state_error", "vision_blackout") if protocol == "g4-pilot/7"
             else ("vision_blackout",))
     data = _section(data, keys, "g4_pilot.training_randomization")
@@ -1019,8 +980,7 @@ def _g4_pilot(data: Any, g3_seeds: tuple[int, ...]) -> G4PilotConfig:
             "ppo", "criteria", "training_randomization")
     data = _section(data, keys, "g4_pilot")
     if data["protocol"] not in G4_PROTOCOLS:
-        raise ValueError(f"g4_pilot.protocol must be one of {G4_PROTOCOLS} (earlier pilots "
-                         "are archived)")
+        raise ValueError(f"g4_pilot.protocol must be one of {G4_PROTOCOLS}")
     curriculum = _section(data["curriculum"], tuple(SuccessGatedCurriculum.__dataclass_fields__),
                           "g4_pilot.curriculum")
     if data["arm"] not in ARMS:
@@ -1085,18 +1045,16 @@ def _g4_pilot(data: Any, g3_seeds: tuple[int, ...]) -> G4PilotConfig:
     return pilot
 
 
-# Seeds used after the fact on 2026-10-28; not registered families, but used, so
-# nothing registered may reuse them (G0_G4_STATUS_KO.md sections 9.2, 10, 10.6-10.7).
+# Seeds already spent on diagnostic runs; the config's Isaac evaluation seeds may not reuse them.
 DIAGNOSTIC_SEED_RANGES = (
-    ("pilot-2 and reward-v2 diagnostics", 996001, 996048),
-    ("isaac-eval/1 flight and its traced diagnostic re-flight", 994001, 994010),
-    ("observation/3 re-acquisition checks on the local plant", 997001, 997048),
-    ("isaac-eval/2 flight, whose traces designed observation/3", 994011, 994020),
-    ("isaac-eval/3 flight, whose failures motivated pilot 5", 994021, 994030),
-    ("pilot-5 design checks on the local plant", 998001, 998048),
-    ("isaac-eval/4 flight and the paired pilot-4 re-flight, whose traces motivated pilot 6",
-     994031, 994040),
-    ("pilot-6 design checks on the local plant", 995001, 995048),
+    ("diagnostic seeds", 996001, 996048),
+    ("diagnostic Isaac seeds", 994001, 994010),
+    ("diagnostic seeds", 997001, 997048),
+    ("diagnostic Isaac seeds", 994011, 994020),
+    ("diagnostic Isaac seeds", 994021, 994030),
+    ("diagnostic seeds", 998001, 998048),
+    ("diagnostic Isaac seeds", 994031, 994040),
+    ("diagnostic seeds", 995001, 995048),
 )
 
 
@@ -1211,10 +1169,9 @@ def _scenario(data: Any, contact: ContactLimits) -> Any:
             raise ValueError("task.scenario.held_out must not be a cyclic shift (one relative "
                              "geometry class would never be trained)")
     elif data["version"] == "spatial-current-scenario/2" and len(classes) != 1:
-        # /2: development/1 measured /1's held-out set as no harder than in-distribution
-        # for every arm (the task is near rotation-equivariant, so an unseen orientation
-        # of a trained relative geometry is interpolation).  /2 holds out exactly one
-        # relative class B - A instead; every A and every B bin still trains.
+        # /2 holds out exactly one relative class B - A instead: the task is near
+        # rotation-equivariant, so an unseen orientation of a trained relative geometry
+        # is interpolation.  Every A and every B bin still trains.
         raise ValueError("task.scenario.held_out (scenario/2) must be one cyclic shift: "
                          "all of one relative-geometry class B - A")
     if coupling:
@@ -1282,18 +1239,18 @@ def _pilot_seeds(value: Any) -> tuple[int, ...]:
 def _navigation(section: Any) -> Any:
     if section is None:
         return None
-    # Observation profile /4 (live own navigation with the kinematic WLS or CA-KF estimator)
-    # was archived on 2026-11-20 with every non-ORL route (archive/non_orl_20261120.tar.zst).
+    # Observation profile /4 (live own-navigation estimators) is not part of this code;
+    # every arm runs on the base navigation contract.
     raise ValueError("this config carries a 'navigation' section (observation profile /4), "
-                     "whose estimators were archived on 2026-11-20; ORL runs on the base "
-                     "navigation contract (spatial_view_contact_v1.yaml)")
+                     "which this code does not support; ORL runs on the base navigation "
+                     "contract (spatial_view_contact_v1.yaml)")
 
 
 def load_config(path: str | Path | None = None) -> CurrentSemanticsConfig:
     """Load and validate the registered YAML; every key is required, none is extra."""
     path = DEFAULT_CONFIG_PATH if path is None else Path(path)
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-    # The one optional top-level key: observation profile /4 (navigation.py).
+    # The one optional top-level key, refused by ``_navigation``.
     navigation_section = raw.pop("navigation", None) if isinstance(raw, dict) else None
     data = _section(raw, _TOP_KEYS, "config")
     if data["schema_id"] != SCHEMA_ID:
@@ -1378,7 +1335,7 @@ def load_config(path: str | Path | None = None) -> CurrentSemanticsConfig:
 # ------------------------------------------------------------- model design
 
 def design_parameter_counts(model: ModelDesign) -> dict[str, dict[str, int]]:
-    """Guide 8.4's design formula; models.py must measure the same trainable counts.
+    """Trainable-parameter formula of each arm; models.py must measure the same counts.
 
     Encoder: Linear(10, d) + one shared relational layer (R*d*d weights,
     R relation biases, two attention vectors and a bias) + bias-free readout.
@@ -1423,16 +1380,15 @@ MODEL_ARCHITECTURE = MappingProxyType({
                        "shared layer applied twice neither shrinks nor grows node states); "
                        "att_src, att_dst N(0, attention_init_std^2); relation_bias and layer "
                        "bias 0; log_std = initial_log_std"),
-    # Was N(0, 0.1^2) for W_r too: measured on 90 local-plant decisions, that
-    # left g8 at RMS 0.004-0.006 against raw21 0.50 (two hops each shrink by
-    # ~0.1*sqrt(8)); N(0, 1/d) gives 0.05-0.07.  Chosen by the rule, not tuned
-    # to a target magnitude.
+    # N(0, 1/d) keeps the node-state scale across the shared hops; N(0, 0.1^2)
+    # would shrink it by ~0.1*sqrt(8) per hop and leave the graph readout about
+    # two orders of magnitude below raw21.  Chosen by the rule, not tuned to a
+    # target magnitude.
     "relational_weight_init": "normal(0, 1/node_embedding)",
     "attention_init_std": 0.1,
-    # G4 pilot 1 (2026-10-28): the U(+-1/sqrt(fan_in)) output layer gave the initial
-    # mean action a constant bias that integrates (net acceleration) into the 20 m /
-    # 60 m envelope within ~15 s, so the curriculum's easy rungs were spent removing
-    # drift.  The actor's OUTPUT layer is scaled by this factor and its bias zeroed,
+    # A U(+-1/sqrt(fan_in)) output layer gives the initial mean action a constant
+    # bias, a net acceleration that integrates into the 20 m / 60 m envelope within
+    # ~15 s.  The actor's OUTPUT layer is scaled by this factor and its bias zeroed,
     # so every arm starts from a mean near zero; hidden layers are unchanged.
     "actor_output_init_scale": 0.01,
 })
@@ -1444,12 +1400,12 @@ PLUGGABLE_PARTS = ("features", "graph")
 
 
 def _extension_part(name: str, config: CurrentSemanticsConfig) -> Any:
-    """``current_semantics.<name>.manifest_part(config)`` once that module exists.
+    """``current_semantics.<name>.manifest_part(config)``, or None without it.
 
-    Extension point for the later stages: ``features.py`` and ``graph.py``
-    each define ``manifest_part(config) -> dict`` of plain JSON types.  Until
-    they do, the part is None and every hash that depends on it is None, so
-    an incomplete contract can never carry a complete-looking hash.
+    ``features.py`` and ``graph.py`` each define ``manifest_part(config) -> dict``
+    of plain JSON types.  A missing module or hook makes the part None and every
+    hash that depends on it None, so an incomplete contract can never carry a
+    complete-looking hash.
     """
     module_name = f"{__package__}.{name}"
     try:
@@ -1464,7 +1420,8 @@ def _extension_part(name: str, config: CurrentSemanticsConfig) -> Any:
 
 def contract_manifest(config: CurrentSemanticsConfig, *,
                       navigation: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    """``navigation`` defaults to the config's own profile (None: the registered /3)."""
+    """The full contract with its split hashes.  ``navigation`` defaults to the
+    config's own profile (None: the base observation profile)."""
     if config.navigation is not None:
         own = config.navigation.manifest_part()
         if navigation is not None and _plain(dict(navigation)) != _plain(own):
@@ -1483,7 +1440,7 @@ def contract_manifest(config: CurrentSemanticsConfig, *,
                     "encoder_relations": ENCODER_RELATIONS,
                     "critic": "common raw21 critic for every arm",
                     "design_parameter_counts": design_parameter_counts(config.model)})
-    # G3 implementation-check constants: hashed on their own and kept out of
+    # Implementation-check constants (``g3``): hashed on their own and kept out of
     # algorithm_hash, so retuning a check never re-labels a model.
     g3 = _plain({"pilot_seeds": config.g3.pilot_seeds,
                  "pilot_seed_note": config.g3.pilot_seed_note,
@@ -1515,10 +1472,10 @@ def contract_manifest(config: CurrentSemanticsConfig, *,
             {"version": GRAPH_VERSION, "graph": graph}),
         "g3_hash": digest(g3),
         "task_hash": digest(task),
-        # The G4 pilot's protocol (PPO settings, budget, seeds, criteria): its own
-        # hash, so a pilot result is only read under the protocol it ran.
+        # The training recipe (``g4_pilot``: PPO settings, budget, seeds, criteria):
+        # its own hash, so a result is only read under the recipe it ran.
         "g4_hash": digest(_plain(config.g4)),
-        # The Isaac evaluation protocol of the selected checkpoints.
+        # The Isaac check of selected checkpoints (``isaac_eval``).
         "isaac_eval_hash": digest(_plain(config.isaac_eval)),
     }
     hashes["algorithm_hash"] = None if missing else digest(

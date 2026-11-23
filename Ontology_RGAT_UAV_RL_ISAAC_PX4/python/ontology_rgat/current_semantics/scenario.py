@@ -2,35 +2,32 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""The omnidirectional landing scenario of task v5 (guide 11.1, 2026-10-29).
+"""The omnidirectional approach scenario (paper Sec. 4.1, Fig. 4).
 
-The spatial-reference/12 local plant draws the pad's travel heading from
-U(-0.2, 0.2) rad and the initial horizontal offset from a 0.4 m square, so every
-episode is "pad driving +x".  Measured on the Raw pilot-6 checkpoints
-(results/.../development_design/factor_probe.txt): 96/96 nominal, 0/96 with the
-pad heading 80-100 or 170-190 deg, 45-48/48 with the pad 0.8 m away at any
-bearing.  A composition test over that distribution has nothing to measure, so
-on the user's choice the task now draws both factors over the full circle:
+The base ``LocalBackend`` draws the pad's travel heading from U(-0.2, 0.2) rad
+and the initial horizontal offset from a 0.4 m square, so every episode is
+"pad driving +x".  This module draws both factors over the full circle:
 
     A  bearing of the PAD seen from the drone at reset (own-minus-pad = -r (cos A, sin A))
     B  heading of the pad's travel
 
-each in ``bins`` equal sectors centred on 0, 360/bins, ...  Training,
-validation and the in-distribution tests draw (A bin, B bin) uniformly from the
-combinations NOT held out; the composition test draws only from ``held_out``.
-The held-out set is a permutation (every A bin and every B bin is held out
-exactly once, so both marginals stay uniform in training) that is not a cyclic
-shift, so every relative-geometry class (B - A) keeps training examples.
+each in ``bins`` equal sectors centred on 0, 360/bins, ...  Training and the
+trained-direction evaluation draw (A bin, B bin) uniformly from the
+combinations NOT held out; the held-out-direction evaluation draws only from
+``held_out``.  The held-out set is a permutation (every A bin and every B bin
+is held out exactly once, so both marginals stay uniform in training) that is
+not a cyclic shift, so every relative-geometry class (B - A) keeps training
+examples.
 
-The plant, the sensor and every other draw are the spatial-reference/12
-``LocalBackend``'s; ``ScenarioLocalBackend`` only replaces the offset and the
-heading after its reset (curriculum shrink and camera-footprint limit applied
-the same way) and re-primes the first frame from the new geometry.  The draw
-uses its own seeded stream, so the plant's stream is not moved.
+The plant, the sensor and every other draw are the base ``LocalBackend``'s;
+``ScenarioLocalBackend`` only replaces the offset and the heading after its
+reset (curriculum shrink and camera-footprint limit applied the same way) and
+re-primes the first frame from the new geometry.  The draw uses its own seeded
+stream, so the plant's stream is not moved.
 
-Isaac (guide 11.6) flies the SAME draw: ``isaac_scenario`` encodes it in the
-scenario name (``spatial.scenarios.encode_current_omni``), Isaac's pad_motion.py
-and landing_world.py apply it, and ``check_isaac_reset`` refuses an episode whose
+Isaac Sim flies the SAME draw: ``isaac_scenario`` encodes it in the scenario
+name (``spatial.scenarios.encode_current_omni``), Isaac's pad_motion.py and
+landing_world.py apply it, and ``check_isaac_reset`` refuses an episode whose
 acknowledged deck heading, CA acceleration, entry offset or entry yaw differs.
 """
 from __future__ import annotations
@@ -44,22 +41,10 @@ import numpy as np
 from ..spatial.environment import LocalBackend
 
 SCENARIO_VERSION = "spatial-current-scenario/1"
-# /2 (task v6, 2026-11-01): the same draw, but ``held_out`` is one whole relative-
-# geometry class B - A (a cyclic shift).  development/1 measured /1's held-out
-# orientations as no harder than in-distribution for every arm: the task is close to
-# rotation-equivariant, so only B - A changes the control problem.  Pilot 8 held out
-# B = A (the pad fleeing), chosen by a rule declared before the probe
-# (results/current_semantics_3d/spatial_current_semantics_v1_task6/development_design/
-# relative_class_probe.txt), and failed the declared hardness rule (gap 4.7 pp); the
-# declared fallback, pilot 9, holds out B = A + 180 deg (the pad approaching).
-# /3 (task v7, 2026-11-02, user "a": make the tilt -> camera-axis coupling decide the
-# outcome).  Both held-out rules failed on the /12 geometry because the pad started
-# well inside the frame at walking pace (coupling screens 1-2 in results/.../
-# spatial_current_semantics_v1_task7/development_design): only a FAST pad starting near
-# the frame EDGE makes the class and the image axis matter (development/1 Raw, untrained
-# there: narrow-axis fleeing 0.39, wide-axis fleeing 0.60, approaching 0.84-0.90).  /3
-# keeps the draw of /1-/2 and adds the pad's initial speed (``CouplingScenario``); the
-# held-out set may be any balanced permutation.
+# The paper's results use version /1 (the base contract).  Two variants stay loadable:
+# /2 draws the same way but ``held_out`` is one whole relative-geometry class B - A (a
+# cyclic shift); /3 keeps the /1-/2 draw and adds the pad's initial speed
+# (``CouplingScenario``), and its held-out set may be any balanced permutation.
 SCENARIO_VERSIONS = (SCENARIO_VERSION, "spatial-current-scenario/2",
                      "spatial-current-scenario/3")
 SPLITS = ("in_distribution", "composition")
@@ -103,15 +88,16 @@ class EpisodeScenario:
 
 @dataclass(frozen=True)
 class CouplingScenario(CompositionScenario):
-    """/3: the /1-/2 draw plus the pad's initial speed v0 ~ U(pad_speed_m_s) in place of
-    the plant's U(0.3, 0.8) m/s (its CA phase a2/t1/t2 is the plant's).  A separate class,
-    so the /1-/2 contracts keep their exact field set and task hashes."""
+    """Version /3: the /1-/2 draw plus the pad's initial speed v0 ~ U(pad_speed_m_s) in
+    place of the plant's U(0.3, 0.8) m/s (its CA phase a2/t1/t2 is the plant's).  A
+    separate class, so the /1-/2 contracts keep their exact field set and task hashes."""
     pad_speed_m_s: tuple[float, float] = (0.3, 0.8)
 
 
 def pad_speed(spec: Any, seed: int, plant_v0: float, difficulty: float) -> float | None:
-    """/3's initial pad speed for this seed (None below /3).  Below difficulty 1 it is
-    blended with the plant's own curriculum-eased v0, exactly as the plant blends."""
+    """A ``CouplingScenario``'s initial pad speed for this seed (None for the other
+    versions).  Below difficulty 1 it is blended with the plant's own curriculum-eased
+    v0, exactly as the plant blends."""
     speeds = getattr(spec, "pad_speed_m_s", None)
     if speeds is None:
         return None
@@ -149,7 +135,8 @@ NOMINAL_OPTICAL_NOISE_M = 0.02                # LocalBackend.measure's solve noi
 
 @dataclass(frozen=True)
 class PlantFactors:
-    """Evaluation-only departures of the plant (guide 11.2's Motion and Noise rows).
+    """Evaluation-only departures of the plant (paper Table 4, moving-platform and
+    image-noise rows).
     ``pad_acceleration_m_s2`` redraws the pad's CA-phase acceleration from that range
     (nominal 0.1-0.4); ``optical_noise_scale`` multiplies the 0.02 m solve noise by
     adding an independent N(0, 0.02 sqrt(k^2 - 1)) per frame from its own stream."""
@@ -170,7 +157,7 @@ def pad_acceleration(seed: int, factors: PlantFactors) -> float | None:
 
 
 # Isaac's entry yaw is the world's 0 plus the profile's seeded misalignment
-# (benchmark.initial_conditions.platform_yaw_misalignment_deg, +-5 deg on v12).
+# (benchmark.initial_conditions.platform_yaw_misalignment_deg, +-5 deg).
 ISAAC_ENTRY_YAW_MAX_RAD = math.radians(5.0)
 
 
@@ -223,8 +210,8 @@ def check_isaac_reset(detail: Any, seed: int, name: str) -> dict[str, Any]:
 
 
 class ScenarioLocalBackend(LocalBackend):
-    """The spatial-reference/12 local plant with the task-v5 offset and heading
-    (and, for evaluation cells only, the ``PlantFactors``)."""
+    """The local plant with this module's offset and heading (and, for evaluation
+    cells only, the ``PlantFactors``)."""
 
     def __init__(self, cfg: Any, *, difficulty: float = 1.0, scenario: CompositionScenario,
                  split: str, factors: PlantFactors = PlantFactors()):

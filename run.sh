@@ -3,11 +3,8 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-# Experiment routing.  Since 2026-11-20 the repository holds one route: the current-observation
-# 3D study of the ORL landing policy and its comparison arms (current_semantics/).  Every other
-# route (minimal-observation ROS system, spatial-reference ladder, two-axis reference, MATLAB
-# port, Isaac legacy, navigation-degradation demo) was archived in
-# archive/non_orl_20261120.tar.zst.  A bare ./run.sh only prints this usage; it starts nothing.
+# Entry point of the experiments in the paper (Ontology_RGAT_UAV_RL_ISAAC_PX4/README.md).
+# A bare ./run.sh only prints this usage; it starts nothing.
 set -Eeuo pipefail
 repository_root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 project_root="$repository_root/Ontology_RGAT_UAV_RL_ISAAC_PX4"
@@ -16,17 +13,13 @@ export PYTHONUNBUFFERED=1
 usage() {
   echo 'Usage:'
   echo '  ./run.sh current-semantics-3d --stage STAGE [options]'
-  echo '      audit | fixtures | smoke | coupling | learnability | report     contract and gates'
-  echo '      orl-learnability | register-orl-development | orl-develop       ORL protocols'
-  echo '      register-speed | speed | speed-report                           learning-speed/1'
-  echo '      register-development | develop                                  development stage'
-  echo '      isaac-eval | isaac-trace | register-isaac-development | isaac-development'
-  echo '                                  owned Isaac Sim + PX4 flights, only with --allow-isaac'
-  echo '      monitor | dashboard                                             read-only pages'
-  echo '  ./run.sh current-semantics-3d --help      every stage and option'
+  echo '      register-speed | speed | speed-report          learning speed (paper Sec. 5.1)'
+  echo '      register-budget | budget | budget-report       equal training budgets (Sec. 5.2)'
+  echo '      register-isaac-budget | isaac-budget           Isaac Sim-PX4 closed loop (Sec. 5.3);'
+  echo '                                                     isaac-budget only with --allow-isaac'
+  echo '  ./run.sh current-semantics-3d --help               every stage and option'
   echo
-  echo 'A bare ./run.sh starts nothing.  Other routes were archived on 2026-11-20'
-  echo '(archive/non_orl_20261120.tar.zst).'
+  echo 'A bare ./run.sh starts nothing.'
 }
 
 case "${1:-}" in
@@ -35,12 +28,13 @@ case "${1:-}" in
     ;;
   current-semantics-3d)
     shift
+    # Training is bit-identical only single-threaded.
     export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
     export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
     exec python3 "$project_root/python/run_current_semantics_3d.py" "$@"
     ;;
   *)
-    echo "unknown route '$1'; only current-semantics-3d remains (other routes are archived)" >&2
+    echo "unknown route '$1'; the only route is current-semantics-3d" >&2
     usage >&2
     exit 2
     ;;

@@ -212,15 +212,12 @@ FAILSAFE_SITL_INFRASTRUCTURE_FIELDS = frozenset({
     # and the stock SITL pack empties in 60 simulated seconds. The pack the
     # experiment actually measures is the independently integrated one in the
     # ``battery`` config block -- it is what ends an episode as
-    # ``battery_depleted``, which 37 of 60 teacher flights did on 2026-09-24
-    # while PX4 reported this same pinned, full pack.
+    # ``battery_depleted``, while PX4 keeps reporting this pinned, full pack.
     #
     # So "unhealthy" here cannot be a charge state. What it is, is a stale
-    # ``battery_status`` topic: on 2026-09-24 it appeared in the middle of a
-    # uXRCE-DDS message-loss burst (``vehicle_command lost, generation
-    # 5 -> 10``) and, classified hard, it re-raised through
-    # ``collect_episode_resilient`` without spending a retry and ended a run
-    # that had already collected its demonstrations and trained 16 episodes.
+    # ``battery_status`` topic: it appears in the middle of a uXRCE-DDS
+    # message-loss burst (``vehicle_command lost, generation 5 -> 10``), and
+    # classified hard it would end the run without spending a retry.
     #
     # Hardware is untouched: ``_classify_failsafe`` only offers recovery when
     # the target is SITL, and a real pack there reports through
@@ -233,11 +230,10 @@ FAILSAFE_SITL_INFRASTRUCTURE_FIELDS = frozenset({
 # nothing else can raise it -- FAILURE_ALT is unused and FAILURE_EXT needs an
 # ATS receiver SITL does not have. It therefore means one thing: the vehicle
 # tipped over. That is the task failing, not the infrastructure, and the
-# learner already classifies it (``LiveShinEnvironment`` crash_tilt). Naming it
-# separately lets the bridge end the episode as a crash instead of ending the
-# run, which is what a hard-failsafe abort did on 2026-09-23: PX4 asserts the
-# bit at 60 deg while the learner's own crash verdict sits at 75 deg, so every
-# genuine tip-over was intercepted before it could ever be scored.
+# learner already classifies it as a crash. Naming it separately lets the
+# bridge end the episode as a crash instead of ending the run: as a hard
+# failsafe, PX4's bit at 60 deg (the learner's own crash verdict sits at
+# 75 deg) would intercept every genuine tip-over before it could be scored.
 FAILSAFE_ATTITUDE_FIELDS = frozenset({"fd_critical_failure"})
 
 
@@ -612,9 +608,8 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             # Wedge instrumentation. Both timers below share ``control_lock``
             # and the executor has two threads, so one callback blocking while
             # it holds the lock stops the UDP replies AND the OFFBOARD
-            # heartbeat together -- which is exactly the pair of symptoms seen
-            # on 2026-09-24 (gateway timeouts at the learner, and PX4 raising
-            # offboard_control_signal_lost every few seconds). These fields
+            # heartbeat together -- gateway timeouts at the learner, and PX4
+            # raising offboard_control_signal_lost every few seconds. These fields
             # cost an attribute write per callback and let the watchdog say
             # which of the two was holding, and for how long.
             self._poll_seen = time.monotonic()
@@ -626,8 +621,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             # owes and ``_on_odometry`` is what actually sends it. So a gateway
             # whose timers are all running and whose lock is free can still owe
             # the learner an answer forever, simply because PX4 stopped
-            # publishing odometry -- which is what the first watchdog pass
-            # showed on 2026-09-24: five learner timeouts, zero wedge reports.
+            # publishing odometry (learner timeouts with no wedge report).
             # These two say whether the reply is late because this process is
             # stuck or because its input dried up.
             self._reply_owed_since: float | None = None
@@ -715,7 +709,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             self.deck_sigma_xy_m = 0.0
             self.warned_missing_deck = False
             # The simulator's own deck pose, for scoring the episode only. It
-            # never reaches the policy: see docs/ARCHITECTURE.md, "GNSS".
+            # never reaches the policy.
             self.deck_truth_position_enu: np.ndarray | None = None
             self.deck_truth_velocity_enu = np.zeros(3)
             self.uav_truth_position_enu: np.ndarray | None = None
@@ -1594,10 +1588,9 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
             # stale. Waiting for staleness serves that frozen solve as if it
             # were live, so the policy flies half a second of a pad-relative
             # position that stopped tracking the moment the pad left the frame.
-            # Legacy ArUco path only. The primary keypoint benchmark runs with
-            # ``vision.mode: keypoint_fiducial`` and ``pose_source_for_policy:
-            # false``, so the simulator publishes neither marker quality nor a
-            # detector-solved pose: ``marker_live`` stays False, no marker pose
+            # ArUco path only. With ``vision.mode: keypoint_fiducial`` and
+            # ``pose_source_for_policy: false`` the simulator publishes neither
+            # marker quality nor a detector-solved pose: ``marker_live`` stays False, no marker pose
             # ever reaches navigation, and field-of-view truth is the separate
             # geometric quantity computed from pad-relative truth.
             marker_live = self.sample.marker_quality > 0.0
@@ -1827,7 +1820,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
         def _on_thrust_setpoint(self, msg) -> None:
             # PX4's own normalised body thrust. While its position controller
             # holds a hover this is the hover thrust the gateway mapping must
-            # be centred on; see tools/calibrate_hover_thrust.py.
+            # be centred on (``px4.hover_thrust`` in config/system.yaml).
             self.sample.extra["px4_thrust"] = float(-msg.xyz[2])
             self._publish_flight_state()
 
@@ -2876,7 +2869,7 @@ def _Px4GatewayNode(cfg: GatewayConfig, safety: SafetyGate, types):
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="MATLAB to PX4 uXRCE-DDS gateway")
+    parser = argparse.ArgumentParser(description="Learner to PX4 uXRCE-DDS gateway")
     parser.add_argument("--config", required=True)
     parser.add_argument("--target", choices=("sitl", "hardware"))
     parser.add_argument("--allow-arm", action="store_true")

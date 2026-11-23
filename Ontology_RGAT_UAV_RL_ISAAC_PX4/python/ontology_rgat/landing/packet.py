@@ -17,10 +17,9 @@ predicted field-of-view margin and the acceleration uncertainty -- arrived only
 at rungs 6 and 7, so the default spatial contract could not build the reference
 context at all and filled the nine rows positionally instead.
 
-``planar_name`` records what upstream MATLAB calls each field at one axis.
-``test_one_axis_spec_reproduces_the_reference_registry`` pins the 1-axis
-expansion of this spec onto the frozen 2D reference registry, so the derivation
-is checked rather than asserted.
+``planar_name`` records what the upstream 2D reference calls each field at
+one axis, so the 1-axis expansion of this spec reproduces the 2D reference
+registry.
 
 Nothing here reads simulator truth, outcomes, labels or contact state.
 """
@@ -102,8 +101,8 @@ FIELD_SPECS: tuple[FieldSpec, ...] = (
     # --- Non-reference extras, opt-in. ---
     # With a nonzero camera transport delay the capture-aligned measurement and
     # the estimator's current bearing stop coinciding. The reference graph reads
-    # the capture-aligned one (``measuredBearing``); the vector arm still needs
-    # the current estimate, and the delay itself must be observable.
+    # the capture-aligned one (``measuredBearing``); a packet-reading policy
+    # still needs the current estimate, and the delay itself must be observable.
     _axis("estimatedBearing", "estimatedBearing", HALF_FOV,
           "causal_pad_track_projection", reference=False),
     _shared("opticalTransportAge", 1.0, "metric_marker_detector", reference=False),
@@ -144,7 +143,7 @@ def field_names(axes=SPATIAL_AXES, *, extras=False) -> tuple[str, ...]:
             names.append(spec.name)
         elif len(axes) == 1:
             # One axis reproduces upstream's own names, so the planar registry
-            # stays byte-identical to the ported MATLAB contract.
+            # stays byte-identical to the 2D reference contract.
             names.append(spec.planar_name)
         else:
             names.extend(f"{spec.name}_{axis}" for axis in axes)

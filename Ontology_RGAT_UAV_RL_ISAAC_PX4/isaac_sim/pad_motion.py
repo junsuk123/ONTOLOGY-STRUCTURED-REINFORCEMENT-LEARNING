@@ -42,18 +42,16 @@ MODES = ("static", "constant", "circular", "lissajous", "road", "waypoints",
 CARRIERS = ("lorry", "ugv")
 # The training random walk with one straight dash laid over it: the deck
 # accelerates to the carrier's scenario peak speed, holds it for
-# ESCAPE_BURST_DISTANCE_M and eases back onto the walk. Written for the
-# behaviour-cloning demonstrations (2026-09-21): the teacher follows the pad,
-# the pad leaves the camera frame, the teacher climbs, re-acquires it and
-# follows again, so the student sees a recovery it will need rather than only
-# approaches that never lose the deck.
+# ESCAPE_BURST_DISTANCE_M and eases back onto the walk, so the pad leaves the
+# camera frame of a vehicle that is following it and a recovery (climb,
+# re-acquire, follow again) is needed, not only approaches that never lose the
+# deck.
 ESCAPE_BURST_SCENARIO = "training_random_walk_escape_burst"
 # The same pull-away laid over a constant-velocity straight run instead of the
-# random walk. This is the CICS2026 comparison scenario: the deck cruises in a
-# straight line, the vehicle settles into following it, and then it accelerates
-# hard enough to leave a downward camera's frame, which is the event the three
-# arms are compared on. The walk-based variant above stays for the behaviour
-# cloning demonstrations that need a varied approach before the same event.
+# random walk: the deck cruises in a straight line, the vehicle settles into
+# following it, and then it accelerates hard enough to leave a downward
+# camera's frame. The walk-based variant above gives a varied approach before
+# the same event.
 STRAIGHT_ESCAPE_BURST_SCENARIO = "straight_escape_burst"
 # The same deck on a closed oval instead of an open straight line: two straight
 # segments joined by two constant-speed semicircles, driven forever.
@@ -74,7 +72,7 @@ STRAIGHT_ESCAPE_BURST_SCENARIO = "straight_escape_burst"
 # what the scenario is for. The turns are constant-speed circular arcs of a
 # fixed radius, so the deck's speed never changes except for the dash itself.
 STRAIGHT_ESCAPE_BURST_TRACK_SCENARIO = "straight_escape_burst_track"
-# The three CICS2026 comparison decks. Each one is a straight line at a
+# The three segmented-cruise decks. Each one is a straight line at a
 # constant heading whose speed is piecewise constant: three segments, switching
 # at SEGMENTED_CRUISE_SWITCH_TIMES_S, with a bounded acceleration between them
 # so the change is a real vehicle changing speed and not a step in velocity.
@@ -89,7 +87,7 @@ STRAIGHT_ESCAPE_BURST_TRACK_SCENARIO = "straight_escape_burst_track"
 # simplification: the reduced control envelope pins the vehicle's lateral
 # velocity to zero and holds its yaw, which keeps it centred on the deck's
 # track *because the track does not turn*. A curved deck would make those two
-# constraints wrong rather than merely restrictive. See docs/PLANAR_ENVELOPE.md.
+# constraints wrong rather than merely restrictive.
 SEGMENTED_CRUISE_SCENARIOS = (
     "segmented_cruise_slow", "segmented_cruise_medium", "segmented_cruise_fast",
 )
@@ -161,22 +159,21 @@ def is_benchmark_scenario(scenario: str) -> bool:
 #                the deck: within ESCAPE_BURST_FOLLOW_LATERAL_M and inside the
 #                ESCAPE_BURST_FOLLOW_ALTITUDE_M band after policy handover,
 #                with the deck heading straight out behind the camera. A
-#                seed-timed dash (first version, 2026-09-21) fired at 4-7 s,
-#                when the privileged PD teacher was still 3.6-4.4 m up on its
-#                slow approach descent, and from there a 60-deg camera keeps a
-#                deck 2.4 m away comfortably in frame: three flights landed
-#                without ever losing the pad, which was the whole point.
+#                seed-timed dash fires at 4-7 s, when a slow approach is
+#                still 3.6-4.4 m up, and from there a 60-deg camera keeps a
+#                deck 2.4 m away comfortably in frame, so the pad is never
+#                lost.
 #   timed     -- the seed-drawn start below, kept for closed-form tests.
 ESCAPE_BURST_TRIGGERS = ("following", "timed")
 # The vehicle counts as following when it is this close laterally and this
 # low: from 2.5 m the frame reaches only ~4.7 m ahead and nothing behind, so a
 # dash out behind the camera leaves it within a second or two of relative
 # motion. Below 0.5 m the flare is committed and a loss there is the expected
-# end of a landing, not a recovery to demonstrate.
+# end of a landing, not a recovery.
 ESCAPE_BURST_FOLLOW_LATERAL_M = 0.9
 ESCAPE_BURST_FOLLOW_ALTITUDE_M = (0.5, 2.5)
 # Never in the first moments after handover, and always by this long after it
-# even if the teacher never closes: a demonstration without the event is the
+# even if the vehicle never closes: an episode without the event is the
 # walk-only flight the scenario exists to replace.
 ESCAPE_BURST_MIN_FOLLOW_S = 2.0
 ESCAPE_BURST_FALLBACK_S = 25.0
@@ -304,7 +301,7 @@ def escape_burst_due(*, lateral_m: float, altitude_m: float,
     ``elapsed_s`` is simulated time since the policy took the vehicle over.
     True once the vehicle has been following -- close and low -- for at least
     ``ESCAPE_BURST_MIN_FOLLOW_S``, and unconditionally after
-    ``ESCAPE_BURST_FALLBACK_S`` so every demonstration carries the event.
+    ``ESCAPE_BURST_FALLBACK_S`` so every episode carries the event.
     """
     if not all(math.isfinite(float(v)) for v in (lateral_m, altitude_m, elapsed_s)):
         return False
@@ -1121,7 +1118,7 @@ class PadTrajectory:
         The decision is taken HERE, at the reset, from where the deck ended the
         previous episode. Inside an episode the heading is a constant, which is
         what lets the reduced envelope hold zero lateral velocity and one yaw
-        and still stay on the deck's track (docs/PLANAR_ENVELOPE.md).
+        and still stay on the deck's track.
         """
         cfg = self.cfg
         lane = float(cfg.segmented_cruise_heading_rad)
@@ -1349,7 +1346,7 @@ class PadTrajectory:
         yaw increments resume from it afterwards, so the track has no jump.
 
         The dash deliberately ignores the curriculum ``scale``: it exists so
-        the demonstration shows the pad leaving the frame, and a dash that
+        the episode shows the pad leaving the frame, and a dash that
         shrank with the entry curriculum would not leave it at all.
         """
         peak, begin, hold_end, end, distance = self._escape_burst_speeds(
@@ -1554,9 +1551,9 @@ class PadTrajectory:
                 fraction = min(max(u - index, 0.0), 1.0)
                 # Interpolate along the TRACK, then anchor. Both terms of the
                 # lerp have to be track coordinates: folding
-                # ``random_walk_origin`` in before it (as this did until
-                # 2026-09-22) makes the target ``track[index+1] - origin``, so
-                # the reported deck slides the whole anchor vector backwards as
+                # ``random_walk_origin`` in before it makes the target
+                # ``track[index+1] - origin``, so the reported deck slides the
+                # whole anchor vector backwards as
                 # ``fraction`` sweeps 0 -> 1 and snaps back at the next sample.
                 #
                 # It is silent on the first episode, because ``route_start:
@@ -1565,9 +1562,8 @@ class PadTrajectory:
                 # dominant term: measured on the minimal profile, one 0.1 s
                 # motion-update interval swept 15 m of reported deck position
                 # against the 0.0125 m the deck actually covers in a quarter of
-                # it. Every consumer saw that sawtooth -- the FOV graph, the
-                # relative-state supervision, the reward and the dashboard
-                # trajectory panel, which is where it was finally noticed.
+                # it, and every consumer of the deck pose would see that
+                # sawtooth.
                 track = self.random_walk_position[index]
                 if index + 1 < len(self.random_walk_position):
                     track = track + fraction * (

@@ -2,20 +2,18 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""Common PPO of spatial_current_semantics_v1 (guide 8.3), identical for every arm.
+"""Common PPO, identical for every arm (paper Sec. 4.1).
 
 The actor objective is the clipped surrogate on the latent Gaussian's ratio
 (plus ``entropy_coefficient`` times its entropy); the encoder, actor head and
 global log_std learn from it alone.  The common raw critic learns from its own
 squared error.  Nothing else enters: no auxiliary loss, prior or teacher.
 
-Two measured lessons of this repository are built in.  Discounts are
-``exp(-dt/tau)`` of each ACTUAL transition, so GAE and the task's potential
-term share one time base.  And the KL bound is enforced: each actor minibatch
-step is re-measured on its own minibatch after the step and reverted (weights
-and Adam moments) above 1.5 x ``target_kl``, because measuring before the step
-let the first step of every iteration through unbounded (the
-``--enforce-target-kl`` finding).
+Discounts are ``exp(-dt/tau)`` of each ACTUAL transition, so GAE and the task's
+potential term share one time base.  The KL bound is enforced: each actor
+minibatch step is re-measured on its own minibatch after the step and reverted
+(weights and Adam moments) above 1.5 x ``target_kl``, because a check before the
+step would let the first step of every iteration through unbounded.
 """
 from __future__ import annotations
 

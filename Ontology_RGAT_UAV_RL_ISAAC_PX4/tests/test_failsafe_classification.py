@@ -4,15 +4,14 @@
 
 """Which PX4 failsafe inputs may end a multi-hour run, and which may not.
 
-2026-09-24 a run that had already collected its four teacher demonstrations and
-trained sixteen PPO episodes died on
+A run must not die on
 
     PX4 reports an active failsafe (auto_mission_missing,
     manual_control_signal_lost, gcs_connection_lost, battery_unhealthy)
 
 Three of those four are what PX4 publishes throughout autonomous SITL. The
-fourth was classified hard, so ``collect_episode_resilient`` re-raised it
-without spending one of its three retries, and the run ended.
+fourth, classified hard, would be re-raised without spending a retry and end
+the run.
 """
 from __future__ import annotations
 

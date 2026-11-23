@@ -36,10 +36,9 @@ class Truth:
 
 
 class Evaluator:
-    # One table, shared with the 2D route and with upstream MATLAB. A 3D
-    # extension of a 2D task is only comparable to it if the objective is the
-    # same, so these are NOT redefined here -- see landing/terminal.py for the
-    # measurement that retired the separate spatial table.
+    # One table, shared with the 2D reference task. A 3D extension of a 2D
+    # task is only comparable to it if the objective is the same, so these are
+    # NOT redefined here -- see landing/terminal.py.
     UNSAFE_STATUSES = frozenset(UNSAFE_REASONS)
     BONUSES = dict(REFERENCE_TERMINAL_REWARDS)
     NOMINAL_UNSAFE_PENALTY = max(
@@ -622,8 +621,6 @@ class IsaacBackend:
                     # infrastructure outcome EntryResetError names, so it uses
                     # the same owned-restart budget and same-seed retry. A hard
                     # failsafe (battery, estimator, geofence) still propagates.
-                    # Measured 2026-10-07: one such failsafe ended a whole
-                    # minimal-contract Isaac run at its fifth entry.
                     if not failsafe.recoverable:
                         raise
                     raise EntryResetError(

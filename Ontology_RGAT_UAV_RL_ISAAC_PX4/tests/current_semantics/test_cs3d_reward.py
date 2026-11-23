@@ -2,7 +2,7 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""spatial-current-reward/4: the common dense reward of task v4 (reward.py)."""
+"""The common dense reward (reward.py, paper eqs. (14)-(15))."""
 from __future__ import annotations
 
 from dataclasses import replace
@@ -69,7 +69,7 @@ def test_potential_peaks_on_the_field_at_the_touchdown_point():
     for _ in range(200):
         r, v = rng.uniform(-5, 5, 3), rng.uniform(-2, 2, 3)
         assert potential(r, v, REWARD, CH) < 0.0
-    # Further away and off the field both cost, at the registered weights.
+    # Further away and off the field both cost, at the contract's weights.
     assert potential([1.0, 0.0, CH], -FIELD.lateral_gain_per_s * np.array([1.0, 0, 0]), REWARD,
                      CH) == pytest.approx(-REWARD.distance_weight_per_m)
     assert potential([0.0, 0.0, CH], [0.0, 0.0, -FIELD.touchdown_sink_m_s - 1.0], REWARD,
@@ -108,7 +108,7 @@ def test_a_constant_state_pays_only_the_time_cost():
     reward, parts = function.step(state, status="RUNNING", dt=0.1, action_normalized=np.zeros(3),
                                   vision_age_s=0.1)
     assert parts["shaping"] == 0.0 and reward == pytest.approx(-REWARD.time_cost_per_s * 0.1)
-    # /4: the action's change pays nothing beyond its control cost (no noise tax).
+    # The action's change pays nothing beyond its control cost (no noise tax).
     _, jump = function.step(state, status="RUNNING", dt=0.1, action_normalized=np.ones(3),
                             vision_age_s=0.1)
     assert jump["cost"] == pytest.approx(-(REWARD.time_cost_per_s + REWARD.control_cost_per_s)
@@ -202,7 +202,7 @@ def test_a_stale_view_turns_the_sink_into_a_search_climb():
 
 def test_the_blind_last_stretch_keeps_sinking():
     # Below the terminal height and near the centre the camera cannot see the pad on
-    # any landing (pilot6_design_checks: blind from <= 0.43 m, <= 0.56 m off centre).
+    # any landing, so a stale view there must not ask for a climb.
     low = LOST.terminal_height_m - 0.1
     for offset in (0.0, 0.3, LOST.terminal_radius_m):
         e = np.array([offset, 0.0])

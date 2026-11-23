@@ -4,9 +4,8 @@
 
 """Versioned UDP client for the external PX4 gateway.
 
-Port of the retired ``matlab/src/+bridge/PX4Bridge.m``. The wire format is
-unchanged, so the gateway, ``tools/fake_gateway.py`` and ``tools/protocol_probe.py``
-did not have to move with it.
+The wire format is the gateway's (``ontology_rgat_px4.protocol``); every
+request carries the protocol version.
 """
 from __future__ import annotations
 
@@ -102,11 +101,9 @@ class SimulatorFrameTimeout(BridgeError):
     was replaced, and DDS has not finished rediscovering the new publisher when
     the next step asks for a frame.
 
-    It exists because that arrived as a bare ``TimeoutError`` from the ROS
-    buffer, which ``collect_episode_resilient`` -- catching ``BridgeError`` --
-    let straight through. On 2026-09-23 that ended a 128-episode two-arm run
-    outright, three stack restarts into a recovery the retry budget had not
-    even spent.
+    It exists because a bare ``TimeoutError`` from the ROS buffer would slip
+    past retry logic that catches ``BridgeError`` and end the whole run
+    instead of one recoverable episode.
     """
 
 
@@ -123,10 +120,8 @@ class CleanupStopUnconfirmed(BridgeError):
     """
 
 
-# ``marker_quality`` stays in the wire contract for the legacy ArUco profile
-# and recorded fixtures. Nothing on the primary two-pipeline path reads it:
-# field-of-view truth is geometric (LiveShinEnvironment.geometric_pad_center_in_fov)
-# and perception health comes from the keypoint encoder.
+# ``marker_quality`` stays in the wire contract for the ArUco profile and
+# recorded fixtures.
 REQUIRED_STATE_FIELDS = (
     "position", "velocity", "quaternion_wxyz", "angular_velocity",
     "acceleration", "wind", "aero_force", "marker_quality", "estimator_valid",
@@ -184,10 +179,7 @@ _LIVE_LOCAL_PORTS_LOCK = threading.Lock()
 # asks for 1200 s, and 1320 s once the parallel scale is applied -- but asking
 # the gateway for more hold than the protocol admits is rejected outright.
 #
-# Unclamped, that rejection failed *every* reset: 2026-09-21, the first run to
-# finish its warm start died on the next stage's first episode. It had been
-# invisible until then only because the demonstration stage shortens the guard
-# to 120 s for its own flights.
+# Unclamped, that rejection would fail every reset whose guard exceeds it.
 GATEWAY_MAX_HOLD_S = 900.0
 _HOLD_CLAMP_REPORTED = False
 
@@ -377,13 +369,10 @@ class PX4Bridge:
         # Waiting out the budget for a gateway that no longer exists is the
         # dominant cost of every shared-stack rebuild. One worker's genuine
         # failure cycles the simulator all four pairs share, and the siblings
-        # are mid-exchange with gateways that are being killed: 2026-09-24 the
-        # run log shows "Stopping gateway_0" followed immediately by two
-        # siblings each spending the full timeout, three times in one hour,
-        # and each of those spurious timeouts then scheduled a rebuild of its
-        # own. Nothing was wrong with the gateway -- instrumenting it found no
-        # wedge, no starved input and no dropped datagram, because the process
-        # was simply gone.
+        # are mid-exchange with gateways that are being killed. Each sibling
+        # would spend the full timeout and then schedule a rebuild of its own,
+        # although nothing is wrong with the gateway: the process is simply
+        # gone.
         #
         # So watch the stack instead of the socket: a rebuild in progress, or a
         # generation that has already moved on, means the answer is not coming.
@@ -678,12 +667,10 @@ class PX4Bridge:
         worst = {"offset": 0.0, "speed": 0.0}
         longest_streak = 0.0
         # A vehicle that is neither closing the gap nor moving at all is not
-        # settling slowly; it is not flying. Measured 2026-09-23: a pair sat on
-        # the deck at 0.00 m/s, 5.13 m from a commanded pose 4.50 m above it,
-        # and spent 10515 of 10515 samples -- 271 s of wall clock -- closing
-        # -0.00 m of it before the budget expired and the stack was rebuilt
-        # anyway. The rebuild was the only remedy either way, so the budget
-        # bought nothing but delay.
+        # settling slowly; it is not flying. A vehicle parked on the deck at
+        # 0.00 m/s, 5 m from a commanded pose above it, would otherwise spend
+        # the whole budget (minutes of wall clock) closing nothing before the
+        # stack is rebuilt anyway, so the budget buys nothing but delay.
         #
         # Bail as soon as that is unambiguous. ``entry_stall_speed`` is what
         # makes it safe to do: a vehicle that is chasing, overshooting or
@@ -1112,9 +1099,9 @@ class PX4Bridge:
             # and the OFFBOARD heartbeat the other, the sensor callbacks that
             # actually advance PX4's clock were the ones left waiting -- so the
             # simulated time this loop is waiting for arrived more slowly the
-            # harder it waited. Measured 2026-09-25: 0.07x realtime inside an
-            # episode against 1.1x during the entry hover, which is the same
-            # stack with nobody polling it.
+            # harder it waited. Measured: 0.07x realtime inside an episode
+            # against 1.1x during the entry hover, which is the same stack with
+            # nobody polling it.
             #
             # Sleeping most of the remaining gap keeps the overshoot under one
             # poll interval while cutting the request rate by more than an
@@ -1419,14 +1406,13 @@ class PX4Bridge:
             recoverable = bool(detail.get(
                 "recoverable_infrastructure", False))
             # PX4's attitude failure detector, alone: the vehicle tipped past
-            # FD_FAIL_R/FD_FAIL_P. Raising here made a flipped drone end the
-            # whole run -- ``collect_episode_resilient`` re-raises a
-            # non-recoverable failsafe without spending a single retry -- even
-            # though flight termination is circuit-broken in this build
-            # (CBRK_FLIGHTTERM), so PX4 only warns and the state is still a
-            # true reading of a real, already-failed flight. Hand it to the
-            # environment instead; ``LiveShinEnvironment`` ends the episode as
-            # a crash, PPO learns from the terminal penalty, and the run lives.
+            # FD_FAIL_R/FD_FAIL_P. Raising here would make a flipped drone end
+            # the whole run (a non-recoverable failsafe is re-raised without a
+            # retry), even though flight termination is circuit-broken in this
+            # build (CBRK_FLIGHTTERM), so PX4 only warns and the state is still
+            # a true reading of a real, already-failed flight. Hand it to the
+            # environment instead: it ends the episode as a crash and the run
+            # continues.
             attitude_failure = bool(detail.get("attitude_failure", False))
             # After a completed touchdown we intentionally disarm and stop
             # OFFBOARD. PX4 can retain VehicleStatus.failsafe for one callback

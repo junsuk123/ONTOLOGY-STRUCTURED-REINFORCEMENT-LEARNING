@@ -1,9 +1,9 @@
 extends: shin2026-minimal-system.yaml
 
-# Simulator profile for the reduced planar comparison (2026-09-23).
+# Simulator profile for the reduced planar comparison.
 #
-# Everything the benchmark measures -- the keypoint perception path, the energy
-# model, the landing criteria, the contact test -- is inherited unchanged. What
+# Everything the benchmark measures -- the energy model, the landing criteria,
+# the contact test -- is inherited unchanged. What
 # this profile changes is the two things the planar envelope depends on:
 #
 #   1. the deck drives a STRAIGHT LINE at a CONSTANT HEADING, so "hold yaw and
@@ -14,7 +14,7 @@ extends: shin2026-minimal-system.yaml
 #
 # Neither is an oracle: nothing at run time reads the deck's heading. The reset
 # already aims the vehicle at an entry yaw, and the gateway holds that one
-# heading for the episode. See docs/PLANAR_ENVELOPE.md.
+# heading for the episode.
 
 benchmark:
   # Seed the entry on the deck's track. The Table-I altitude draw is unchanged;
@@ -82,10 +82,9 @@ pad:
   # The backstop, not the bound. ``pose()`` pins the deck on this circle with
   # zero velocity -- a stationary target dressed up as a moving one -- so it
   # has to sit well clear of what the shuttle actually reaches: the leg plus
-  # one episode's travel, 150 + 36 m for a 600-step demonstration flight. 400 m
-  # leaves room for the degraded control-rate case, where a 300-step episode
-  # can cover several times its nominal simulated duration (see the bandwidth
-  # caveat in the top-level README).
+  # one episode's travel, 150 + 36 m for a 600-step flight. 400 m leaves room
+  # for the degraded control-rate case, where a 300-step episode can cover
+  # several times its nominal simulated duration.
   arena_radius_m: 400.0
   route_start: continue
   route_waypoints_enu_m: null
@@ -102,7 +101,7 @@ parallel:
   # ten times further out than anything this pair's camera can reach.
   #
   # Laid out alternating outward from the origin, so the row is symmetric as a
-  # whole and the four-pair run this machine sizes for stays within two lanes
+  # whole and a four-pair run stays within two lanes
   # of the origin rather than trailing off to one side of it.
   pair_offsets_enu_m:
     - [0.0, 0.0, 0.0]

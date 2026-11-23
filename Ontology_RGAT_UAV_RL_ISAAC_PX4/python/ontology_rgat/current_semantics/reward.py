@@ -2,53 +2,40 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""The common training reward of spatial_current_semantics_v1 (``spatial-current-reward/4``).
+"""The common training reward of every arm (paper eq. (14)-(15), ``spatial-current-reward/4``).
 
 Every arm trains on this one function; it reads simulator truth (and the policy's
-own vision age) and nothing else reads it.  The verdict and the terminal table stay the spatial-reference/12
-Evaluator's: this module only replaces the dense part.
+own vision age) and nothing else reads it.  The verdict and the terminal table stay
+the spatial-reference/12 Evaluator's: this module only replaces the dense part.
 
-Why (measured 2026-10-28 on diagnostic seeds 996001-996024, G0_G4_STATUS_KO.md
-section 10): the Evaluator's dense terms are a position potential, which an
-acceleration action moves only after double integration, and a readiness term
-that is exp(-risk/2) and therefore flat beyond ~1 m of the pad.  The correlation
-between an action's projection on the approach direction and the next 1-10
-rewards was -0.05..0.08 under it, so a PPO advantage carried no information
-about which way to push the action.  A potential on the VELOCITY error against
-an approach field moves within the 0.1 s actuation delay of the action:
-correlation 0.10-0.46 over the next 1-10 rewards on the same rollouts (0.10-0.17
-for the untrained policy at nominal, 0.24-0.46 once the mean follows the field
-a little).
+Why a velocity potential: a position potential is moved by an acceleration action
+only after double integration, so its PPO advantage says little about which way to
+push the action.  A potential on the VELOCITY error against an approach field moves
+within the 0.1 s actuation delay of the action.
 
 The potential is
-    Phi(s) = -(w_d * sqrt(|e|^2 + h^2) + w_v * |v - v_des(e, h)|)
+    Phi(s) = -(w_d * sqrt(|e|^2 + h^2) + w_v * |v - v_des(e, h, tau_vis)|)
 with e the own-minus-pad horizontal offset, h the height above the contact
-height and v the own-minus-pad velocity.  The step reward is the UNDISCOUNTED
-difference Phi(s') - Phi(s) (constant Phi pays nothing, so hovering earns no
-discount refund), Phi is kept at the terminal state (a fast contact or a far
-miss is graded by it), and an explicit time and control cost make waiting cost
-something.  The field ends in a contact the verdict accepts: sink at
-``touchdown_sink_m_s`` (< the 0.30 m/s limit), descent only inside the
-alignment radius (< the pad radius).
+height, v the own-minus-pad velocity and tau_vis the policy's vision age.  The
+step reward is the UNDISCOUNTED difference Phi(s') - Phi(s) (constant Phi pays
+nothing, so hovering earns no discount refund), Phi is kept at the terminal state
+(a fast contact or a far miss is graded by it), and an explicit time and control
+cost make waiting cost something.  The field ends in a contact the verdict
+accepts: sink at ``touchdown_sink_m_s`` (< the 0.30 m/s limit), descent only
+inside the alignment radius (< the pad radius).
 
-/3 (2026-10-29) added two costs for the Isaac handover failure (G0_G4_STATUS_KO.md
-10.7, 11.6): a policy that answers a transient estimate with +-2 m/s^2 and
-reverses 0.3-0.5 s later drives PX4 past 21 deg.  ``tilt_cost_per_s`` prices the
-true thrust-axis tilt above ``tilt_cost_onset_deg``, quadratically up to the 21 deg
-envelope.  The other, a command-change cost on mean((u - u_prev)^2), is REMOVED in
-/4: it charged the SAMPLED action, so at the initial sigma exploration noise alone
-paid ~0.65 per decision (22x the time cost) and pilot 5 dived into the pad for
-~340 updates.  No reward on the sampled action can separate the two -- the jumps
-worth pricing (0.5-1.2 normalised) are the size of the noise (0.47) -- while the
-tilt the plant actually reaches filters the noise out: 0.000 per decision for the
-untrained policy, 0.05 for the rough pilot-4 and 0.007 for the smooth pilot-5
-policies (pilot6_design_checks, G0_G4_STATUS_KO.md 13).
+``tilt_cost_per_s`` prices the true thrust-axis tilt above ``tilt_cost_onset_deg``,
+quadratically up to the 21 deg envelope (kappa_t in eq. (15)): a policy that
+answers a transient estimate with +-2 m/s^2 and reverses 0.3-0.5 s later drives
+PX4 past 21 deg.  There is deliberately no command-change cost: it would charge
+the SAMPLED action, whose exploration noise at the initial sigma is as large as
+the jumps worth pricing, while the tilt the plant actually reaches filters the
+noise out.
 
-/4 also makes the field answer a lost pad (``VelocityField.lost_view``): once the
-policy's own vision age passes ``after_s``, outside the blind last stretch of a
-landing, v_des_z turns from the sink to a climb toward ``search_height_m``.  Every
-late Isaac failure on record descended on a stale estimate after the pad left the
-view at 0.8-1.3 m and never climbed back to find it.
+``VelocityField.lost_view`` makes the field answer a lost pad (paper Fig. 4c):
+once the policy's own vision age passes ``after_s``, outside the blind last
+stretch of a landing, v_des_z turns from the sink to a climb toward
+``search_height_m``, so descending on a stale estimate is not rewarded.
 """
 from __future__ import annotations
 

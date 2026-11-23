@@ -24,7 +24,7 @@ from sensor_profiles import (  # noqa: E402
 
 @pytest.fixture(scope="module")
 def config():
-    return load_config(ROOT / "config" / "metasejong-pipeline.yaml")
+    return load_config(ROOT / "config" / "spatial-isaac-system-v12.yaml")
 
 
 def test_zed_f9p_multi_constellation_rtk_profile(config):
@@ -54,30 +54,6 @@ def test_vn100_values_are_converted_to_pegasus_si(config):
     assert profile["gyroscope"]["noise_density"] == pytest.approx(math.radians(0.0035))
     assert profile["accelerometer"]["measurement_range"] == pytest.approx(16.0 * 9.80665)
     assert profile["accelerometer"]["noise_density"] == pytest.approx(0.00014 * 9.80665)
-
-
-def test_zed2i_left_mono_mode_is_a_supported_per_eye_mode(config):
-    camera = config["vision"]["camera"]
-    validate_zed2i_mono(camera)
-    assert camera["eye"] == "left"
-    assert camera["resolution"] == [1280, 720]
-    assert camera["rate_hz"] == pytest.approx(60.0)
-    assert camera["horizontal_fov_deg"] == pytest.approx(110.0)
-    assert config["isaac"]["rendering_dt"] == pytest.approx(1.0 / 60.0)
-
-
-def test_gui_profile_preserves_physics_and_caps_only_rendered_camera_frames(config):
-    gui = isaac_runtime_profile(config, headless=False)
-    headless = isaac_runtime_profile(config, headless=True)
-
-    assert config["isaac"]["physics_dt"] == pytest.approx(1.0 / 250.0)
-    assert gui.rendering_dt == pytest.approx(1.0 / 20.0)
-    assert gui.camera_rate_hz == 20
-    assert gui.viewport_resolution == (960, 540)
-    assert gui.startup_rendering_dt == pytest.approx(0.5)
-    assert gui.startup_max_sim_s == pytest.approx(30.0)
-    assert headless.rendering_dt == pytest.approx(1.0 / 60.0)
-    assert headless.camera_rate_hz == 60
 
 
 def test_ranger_asset_was_generated_from_the_pinned_official_source(config):

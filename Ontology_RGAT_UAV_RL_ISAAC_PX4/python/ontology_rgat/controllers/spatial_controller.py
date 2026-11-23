@@ -15,7 +15,7 @@ import math
 
 import numpy as np
 
-from .planar_controller import STANDARD_GRAVITY
+STANDARD_GRAVITY = 9.80665  # m/s^2
 
 
 SPATIAL_ACTION_CONTRACT = "spatial-enu-net-acceleration-v1"

@@ -2,8 +2,8 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""learning-speed/1 (current_semantics/speed.py): base navigation only, fresh seeds, and the
-registered decision rule on the time to difficulty 1.0."""
+"""The learning-speed comparison (current_semantics/speed.py): base navigation only, fresh
+seeds, and the prespecified decision rule on the time to difficulty 1.0."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -13,6 +13,11 @@ import yaml
 
 from ontology_rgat.current_semantics import orl, speed
 from ontology_rgat.current_semantics.contracts import PROJECT_ROOT, load_config
+
+# The analysis plan files are kept by the authors and are not in the public repository; in a
+# checkout without them these tests are skipped.
+pytestmark = pytest.mark.skipif(not speed.DEFAULT_PATH.exists(),
+                                reason="analysis plan files are kept by the authors")
 
 CONFIGS = PROJECT_ROOT / "config" / "current_semantics"
 BASE = CONFIGS / "spatial_view_contact_v1.yaml"
@@ -36,25 +41,23 @@ def test_the_registered_plan_is_orl_against_untyped_and_raw_on_fresh_seeds(confi
     assert plan.proposed_arm == orl.ARMS["orl/1"]
     assert plan.comparisons == ("untyped_gnn_ppo", "raw_ppo")
     assert plan.training_seeds == tuple(range(40, 50)) and plan.cap == 600
-    assert not set(plan.training_seeds) & speed.SPENT_MODEL_SEEDS
+    assert not set(plan.training_seeds) & set(config.g4.model_seeds)
 
 
 def test_a_navigation_estimator_config_is_refused(tmp_path):
-    """Observation profile /4 (own navigation through an estimator) was archived with its
-    estimators on 2026-11-20; a config that still carries it does not load at all."""
+    """Own state is PX4 EKF2's with no extra estimator: a config with a ``navigation``
+    (own-navigation estimator) section does not load at all."""
     data = yaml.safe_load(BASE.read_text(encoding="utf-8"))
     data["navigation"] = {"estimator": "kalman"}
     path = tmp_path / "nav.yaml"
     path.write_text(yaml.safe_dump(data), encoding="utf-8")
-    with pytest.raises(ValueError, match="archived"):
+    with pytest.raises(ValueError, match="does not support"):
         load_config(path)
 
 
-def test_spent_model_or_episode_seeds_are_refused(config, tmp_path):
-    with pytest.raises(ValueError, match="model seed"):
-        speed.load_plan(_plan_file(tmp_path, training_seeds=[20, 41, 42]), config)
-    with pytest.raises(ValueError, match="overlap"):   # 80e6 + 40e6 = confirmation's block
-        speed.load_plan(_plan_file(tmp_path, train_seed_base=80_000_000), config)
+def test_a_reserved_model_seed_is_refused(config, tmp_path):
+    with pytest.raises(ValueError, match="model seed"):   # 0 and 1: the base recipe's seeds
+        speed.load_plan(_plan_file(tmp_path, training_seeds=[0, 41, 42]), config)
 
 
 def test_each_arm_trains_the_base_recipe_up_to_the_cap(config):

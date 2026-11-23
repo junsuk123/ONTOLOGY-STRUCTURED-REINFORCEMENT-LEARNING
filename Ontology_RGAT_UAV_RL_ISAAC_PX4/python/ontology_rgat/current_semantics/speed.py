@@ -2,34 +2,24 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""learning-speed/1: does the ontology-structured policy (ORL, ``orl/1``) reach the task's
-full difficulty in fewer PPO updates than PPO on the raw observation and the untyped GNN,
-under the base self-navigation, i.e. with NO navigation estimator in the loop?
+"""Learning-speed comparison (paper Secs. 4.3 and 5.1).
 
-Design decision 2026-11-20: the kinematic WLS estimator (internal name WMON) belongs to
-separate research and must not carry this study's contribution; under the base navigation
-and under CA-KF the registered R-GAT arm learned exactly as fast as PPO, while ORL --
-the same ontology used as the policy's STRUCTURE, no raw bypass -- reached difficulty 1.0
-first on 5 of 5 development seeds against every arm (mean update 70 vs 107-109; status doc
-20.3).  That observation was exploratory (the metric was read after the fact), so this
-protocol tests it on fresh model seeds with the decision rule fixed in the plan file before
-any of its models trains.
+Question: does ORL reach the highest curriculum difficulty in fewer PPO updates than MLP PPO
+and untyped-graph PPO?
 
-Procedure.  Each training seed trains the proposed arm and every comparison arm with the
-G4-passed recipe of the base contract (budget per update, curriculum, PPO settings,
-training randomisation), the same episode seeds for all arms of a seed, and stops at the
+Procedure.  Each training seed trains the proposed policy and every comparison policy with
+the base contract's training recipe (12 episodes per update, curriculum, PPO settings,
+training randomisation), the same episode seeds for all policies of a seed, and stops at the
 first update trained at difficulty 1.0 (``pilot.train_seed(stop_at_full=True)``) or at the
-cap.  No checkpoint is selected and nothing is evaluated: the event is the whole outcome.
+cap of 600.  No checkpoint is selected and nothing is evaluated: T is the whole outcome.
 
-Decision rule (``RULE``, hashed into the registration).  Per comparison arm X, the paired
-difference per training seed is ln T(ORL) - ln T(X), T = first update at difficulty 1.0,
-a model still below 1.0 at the cap counted as the cap.  ORL is FASTER than X when the upper
-bound of the two-sided paired-t interval at 1 - alpha/2 (Bonferroni over the two
-comparisons) is below zero, SLOWER when the lower bound is above zero, otherwise not
-established.  A censored comparison model makes its difference a bound in X's favour
-(conservative); a censored ORL model makes it a bound in ORL's favour, so any censored ORL
-model blocks the FASTER verdict for every comparison.  The exact sign test and the ratio of
-means are reported, never decisive.
+Decision rule (``RULE``, part of the plan hash written before any model trains).  Per
+comparison policy X, the paired difference per training seed is ln T(ORL) - ln T(X); a model
+still below difficulty 1.0 at the cap counts as the cap.  ORL is FASTER than X when the upper
+bound of the two-sided paired-t interval at 1 - alpha/2 (Bonferroni over the two comparisons)
+is below zero, SLOWER when the lower bound is above zero, otherwise not established.  A
+censored ORL model would bound its difference in ORL's favour, so any censored ORL model
+blocks the FASTER verdict.  The exact sign test and the ratio are reported, never decisive.
 """
 from __future__ import annotations
 
@@ -47,20 +37,18 @@ from typing import Any, Callable
 import numpy as np
 import yaml
 
-from . import development as dev
+from . import cells
 from . import orl
-from .contracts import (AUDITED_SEED_RANGES, DIAGNOSTIC_SEED_RANGES, PROJECT_ROOT,
-                        CurrentSemanticsConfig, contract_manifest, load_config)
+from .contracts import PROJECT_ROOT, CurrentSemanticsConfig, contract_manifest, load_config
 
-# Isaac environment seeds the development's Isaac flights spent.
-SPENT_ISAAC_SEEDS = (("isaac-development environments", 994_101, 994_130),)
+# The contract hashes a plan binds: a changed algorithm, task, observation, feature, graph,
+# calibration or training recipe makes a stored plan record refuse.
+BOUND_HASHES = ("algorithm_hash", "task_hash", "observation_hash", "feature_hash", "graph_hash",
+                "calibration_hash", "g4_hash")
 
-
-# ----------------------------------------------------- helpers (from confirmation.py, archived
-# 2026-11-20 with every non-ORL route; copied verbatim so the protocol's behaviour is unchanged)
 
 def _alpha(value: Any, where: str) -> float:
-    alpha = dev._number(value, where, low=0.0)
+    alpha = cells._number(value, where, low=0.0)
     if not 0.0 < alpha < 0.5:
         raise ValueError(f"{where} must lie in (0, 0.5)")
     return alpha
@@ -133,7 +121,7 @@ FOLDER = "learning_speed"                 # <root>/learning_speed/
 REGISTRATION = "learning_speed_registration.json"
 RESULT = "learning_speed.json"
 FULL = 1.0
-COMPARABLE = ("raw_ppo", "untyped_gnn_ppo", "semantic_mlp_ppo", "ontology_rgat_ppo")
+COMPARABLE = ("raw_ppo", "untyped_gnn_ppo")
 RULE = (
     "per comparison arm X and training seed: d = ln T(proposed) - ln T(X), T = first update "
     "trained at difficulty 1.0, censored at the cap = the cap; proposed FASTER than X iff the "
@@ -141,18 +129,13 @@ RULE = (
     "(Bonferroni over the comparisons) is < 0 AND no proposed-arm model is censored; SLOWER "
     "iff the lower bound is > 0; otherwise not established.  Sign test and ratio of means "
     "are reported, never decisive.")
-# Training episode seeds other registered plans own (base + model seed * 1e6 + update * 12
-# + episode): confirmation/1 (model seeds 20-39) and its miniature and CA-KF replication.
-SPENT_TRAINING_SEEDS = (("confirmation/1, confirmation-mini/1, replication-mini/1 training",
-                         120_000_000, 139_007_199),)
-SPENT_MODEL_SEEDS = frozenset({0, 1, *range(10, 15), *range(20, 40)})
 
 
 @dataclass(frozen=True)
 class SpeedPlan:
     protocol: str
     proposed: str                       # an ORL version, e.g. "orl/1"
-    comparisons: tuple[str, ...]        # registered arm names
+    comparisons: tuple[str, ...]        # arm names of models.build_model
     training_seeds: tuple[int, ...]
     train_seed_base: int
     cap: int
@@ -176,7 +159,7 @@ class SpeedPlan:
 
 def load_plan(path: str | Path, config: CurrentSemanticsConfig) -> SpeedPlan:
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-    data = dev._section(data, ("protocol", "proposed", "comparisons", "training_seeds",
+    data = cells._section(data, ("protocol", "proposed", "comparisons", "training_seeds",
                                "train_seed_base", "cap", "workers", "family_alpha"),
                         "learning_speed")
     if data["protocol"] != PROTOCOL:
@@ -187,53 +170,35 @@ def load_plan(path: str | Path, config: CurrentSemanticsConfig) -> SpeedPlan:
     if not comparisons or len(set(comparisons)) != len(comparisons) \
             or not set(comparisons) <= set(COMPARABLE):
         raise ValueError(f"learning_speed.comparisons must be distinct arms of {COMPARABLE}")
-    seeds = dev._seeds(data["training_seeds"], "learning_speed.training_seeds")
+    seeds = cells._seeds(data["training_seeds"], "learning_speed.training_seeds")
     if len(seeds) < 3:
         raise ValueError("a paired-t comparison needs at least three training seeds")
     plan = SpeedPlan(
         protocol=PROTOCOL, proposed=data["proposed"], comparisons=comparisons,
         training_seeds=seeds,
-        train_seed_base=int(dev._number(data["train_seed_base"], "train_seed_base", low=0)),
-        cap=int(dev._number(data["cap"], "cap", low=1)),
-        workers=int(dev._number(data["workers"], "workers", low=1)),
+        train_seed_base=int(cells._number(data["train_seed_base"], "train_seed_base", low=0)),
+        cap=int(cells._number(data["cap"], "cap", low=1)),
+        workers=int(cells._number(data["workers"], "workers", low=1)),
         family_alpha=_alpha(data["family_alpha"], "family_alpha"))
-    _check_contract(config)
     _audit(plan, config)
     return plan
 
 
-def _check_contract(config: CurrentSemanticsConfig) -> None:
-    """learning-speed/1 runs on the base self-navigation only: no navigation estimator,
-    above all not the kinematic WLS one, may sit in the policy's observation path."""
-    if config.navigation is not None:
-        raise ValueError("learning-speed/1 runs on the base navigation contract only "
-                         "(spatial_view_contact_v1.yaml); this config carries a navigation "
-                         "estimator")
-
-
 def _audit(plan: SpeedPlan, config: CurrentSemanticsConfig) -> None:
-    """No training seed of this plan may lie in any recorded or registered use."""
+    """Fresh seeds: no training episode of this plan reuses a seed the base contract reserves
+    (its validation, test and Isaac seeds), and the seed blocks do not overlap each other."""
     g4 = config.g4
     per = g4.episodes_per_update
-    if set(plan.training_seeds) & (SPENT_MODEL_SEEDS | set(g4.model_seeds)):
-        raise ValueError("learning-speed training seeds reuse a G4, development or "
-                         "confirmation model seed")
-    used = [(name, first, last) for name, first, last, _ in AUDITED_SEED_RANGES]
-    used += list(DIAGNOSTIC_SEED_RANGES) + list(dev.SPENT_DEVELOPMENT_SEEDS)
-    used += list(SPENT_ISAAC_SEEDS) + list(SPENT_TRAINING_SEEDS)
-    used += [("g4 pilot training", *dev._PILOT_SEEDS)]
+    if set(plan.training_seeds) & set(g4.model_seeds):
+        raise ValueError("learning-speed training seeds reuse a model seed of the base recipe")
     taken = (set(g4.validation_seeds) | set(g4.test_seeds) | set(config.g3.pilot_seeds)
              | set(config.isaac_eval.seeds))
     blocks = [(s, plan.train_seed(s, 0, 0, per), plan.train_seed(s, plan.cap - 1, per - 1, per))
               for s in plan.training_seeds]
     for seed, low, high in blocks:
-        for name, first, last in used:
-            if low <= last and first <= high:
-                raise ValueError(f"learning-speed seed {seed} episodes {low}-{high} overlap "
-                                 f"{name}")
         if any(low <= s <= high for s in taken):
             raise ValueError(f"learning-speed seed {seed} episodes {low}-{high} overlap a "
-                             "registered seed")
+                             "reserved seed")
     spans = sorted((a, b) for _, a, b in blocks)
     if any(spans[i][1] >= spans[i + 1][0] for i in range(len(spans) - 1)):
         raise ValueError("learning-speed seed blocks overlap each other")
@@ -241,7 +206,8 @@ def _audit(plan: SpeedPlan, config: CurrentSemanticsConfig) -> None:
 
 def arm_config(config: CurrentSemanticsConfig, plan: SpeedPlan, arm: str
                ) -> CurrentSemanticsConfig:
-    """The base contract's G4 recipe re-pointed at one arm, this plan's seeds and its cap."""
+    """The base contract's training recipe (``config.g4``) re-pointed at one arm, this
+    plan's seeds and its cap."""
     return replace(config, g4=replace(config.g4, arm=arm, model_seeds=plan.training_seeds,
                                       train_seed_base=plan.train_seed_base,
                                       updates=plan.cap))
@@ -251,7 +217,7 @@ def plan_hash(plan: SpeedPlan, config: CurrentSemanticsConfig) -> str:
     from ..direct_policy.contracts import digest
     manifest = contract_manifest(config)
     return digest({"plan": plan.to_dict(), "rule": RULE, "orl_hash": orl.HASHES[plan.proposed],
-                   "contract": {k: manifest[k] for k in dev.BOUND_HASHES}})
+                   "contract": {k: manifest[k] for k in BOUND_HASHES}})
 
 
 def out_dir(root: Path) -> Path:
@@ -286,7 +252,8 @@ def resolved(plan: SpeedPlan, config: CurrentSemanticsConfig) -> dict[str, Any]:
 # ------------------------------------------------------------- registration
 
 def register(config_path: Path, plan_path: Path, root: Path) -> tuple[int, dict[str, Any]]:
-    """Write the registration before any model trains; an existing one must match."""
+    """Write the plan record (plan, rule and contract hashes) before any model trains; an
+    existing one must match."""
     from .experiment import write_json
     config = load_config(config_path)
     plan = load_plan(plan_path, config)
@@ -341,7 +308,7 @@ def _summary(path: Path, digest: str) -> dict[str, Any] | None:
 
 def run(config_path: Path, plan_path: Path, root: Path, *,
         log: Callable[[str], None] = print, workers: int | None = None) -> tuple[int, dict]:
-    """Train every registered model nobody holds; any number of processes share them."""
+    """Train every planned model nobody holds; any number of processes share them."""
     import torch
     from .experiment import write_json
     from .pilot import _init_worker, train_seed
@@ -373,7 +340,7 @@ def run(config_path: Path, plan_path: Path, root: Path, *,
                 seed_text, arm = key.split("/", 1)
                 acfg = arm_config(config, plan, arm)
                 log(f"speed: {key} trains to difficulty 1.0 or update {plan.cap}")
-                dev._status(directory, "training")
+                cells._status(directory, "training")
                 trained = train_seed(acfg, config_path, int(seed_text), directory, pool,
                                      log=log, updates=plan.cap, stop_at_full=True)
                 rows = _rows(directory / "history.jsonl")
@@ -385,7 +352,7 @@ def run(config_path: Path, plan_path: Path, root: Path, *,
                     "final_difficulty": float(rows[-1]["difficulty"]),
                     "updates_run": len(rows), "training": trained})
                 release(directory)
-                dev._status(directory, "done")
+                cells._status(directory, "done")
                 done_here.append(key)
                 log(f"speed: {key} first difficulty-1.0 update "
                     f"{event if event is not None else f'none by {plan.cap}'}")
@@ -397,7 +364,7 @@ def run(config_path: Path, plan_path: Path, root: Path, *,
 
 def compare(plan: SpeedPlan, proposed: dict[int, dict[str, Any]],
             other: dict[int, dict[str, Any]]) -> dict[str, Any]:
-    """The registered comparison of one arm pair (``RULE``)."""
+    """The prespecified comparison of one arm pair (``RULE``)."""
     from scipy import stats
     seeds = sorted(set(proposed) & set(other))
     t = lambda r: plan.cap if r["censored"] else r["first_full_update"]

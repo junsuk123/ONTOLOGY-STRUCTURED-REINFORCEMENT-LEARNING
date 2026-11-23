@@ -2,7 +2,7 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""phi44 features and the 8x10 node input of spatial_current_semantics_v1 (guide 8.1)."""
+"""phi44 features (paper Sec. 3.1) and the 8x10 node input of the graph-readout arms."""
 from dataclasses import replace
 import math
 import re
@@ -138,7 +138,7 @@ def test_resolved_scales_come_from_the_observation_contract_and_the_config():
     for name, scale in expected.items():
         assert REGISTRY[name].scale == pytest.approx(scale, rel=0, abs=1e-15), name
         assert REGISTRY[name].transform == "signed", name
-    # observation/2 rescaled the velocity channels to 1 m/s; own velocity follows them.
+    # The velocity channels are scaled to 1 m/s; own velocity follows them.
     assert REGISTRY["own_vx"].scale == observation["relative_vx"].scale == 1.0
     assert REGISTRY["view_front_valid"].transform == "flag"
     assert REGISTRY["view_front_valid"].scale is None
@@ -269,7 +269,7 @@ def test_view_entries_are_the_bounded_camera_kinematics():
 def test_non_flag_entries_are_bounded_on_a_sweep_with_extreme_values():
     """Every B entry is strictly inside (-1, 1); raw sin/cos keep their closed
     [-1, 1] (cos 0 = 1 is the level-attitude value) and raw ages reach 1 only
-    as the registered infinite-age sentinel (guide 6.1)."""
+    as the contract's infinite-age sentinel."""
     rng = np.random.default_rng(6)
     signed = [FI[spec.name] for spec in FEATURES if spec.transform == "signed"]
     trig = [FI[spec.name] for spec in FEATURES if spec.transform == "trig"]

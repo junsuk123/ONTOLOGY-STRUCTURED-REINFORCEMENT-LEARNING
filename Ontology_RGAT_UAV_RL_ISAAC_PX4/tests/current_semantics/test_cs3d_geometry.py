@@ -2,7 +2,7 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""Camera kinematics and the nominal v12 calibration of spatial_current_semantics_v1."""
+"""Camera kinematics and the nominal camera calibration of the current-observation route."""
 from dataclasses import replace
 import importlib.util
 import math
@@ -175,7 +175,7 @@ def test_behind_too_near_or_missing_estimate_is_neutral_and_never_divides():
 
 def test_fov_edges_map_to_the_registered_normalisation():
     """Pixel edges are u = 0 and u = W, so xi spans [-1, 1 + 2/(W-1)]: the
-    right/bottom edge sits 2/(W-1) past +1, the same offset as the registered
+    right/bottom edge sits 2/(W-1) past +1, the same offset as the contract's
     xi = 1/(W-1) on the optical axis.  The tolerance is therefore 2/(W-1)."""
     depth = 2.0
     h = depth + MOUNT_DEPTH

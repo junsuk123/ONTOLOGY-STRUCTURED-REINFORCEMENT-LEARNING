@@ -20,7 +20,7 @@ setup(
     author_email="junsuk55944587@gmail.com",
     maintainer="Jun Suk Kim",
     maintainer_email="junsuk55944587@gmail.com",
-    description="Safe external gateway between MATLAB and PX4.",
+    description="Safe external gateway between the learner and PX4.",
     license="Apache-2.0",
     entry_points={
         "console_scripts": [

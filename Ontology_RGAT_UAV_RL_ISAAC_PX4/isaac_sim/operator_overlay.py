@@ -10,8 +10,8 @@ Sim at module scope and cannot be loaded outside the simulator, which is the
 same reason px4_sitl_parameters.py lives beside it.
 
 The overlay draws projected landmarks over the camera frame for an operator.
-Nothing scientific reads it -- not the actor observation, the reward, the R-GAT
-input, the labels, the resets or any metric -- but drawing it costs a
+Nothing scientific reads it -- not the actor observation, the reward, the policy
+graph, the labels, the resets or any metric -- but drawing it costs a
 GRAY->BGR convert, a dozen OpenCV primitives, a BGR->RGB convert and a ~491 KB
 ``tobytes`` per camera per rendered frame, on the single thread that also steps
 physics and renders.

@@ -8,10 +8,10 @@ The planar reference declares nine nodes over five relations. Replicating those
 nine per axis is a correct DIMENSIONAL extension but not a complete one: 3D
 introduces phenomena the planar task has no element for, and a node that does
 not exist cannot be attended to. Worse, the quantities describing those
-phenomena sit in the packet, which only ``ppo_vector_canonical`` reads -- the
-flat and R-GAT arms see the graph alone. Leaving them unmodelled hands the
-BASELINE exclusive information in 3D that it did not have in 2D, which is the
-opposite of what the comparison is supposed to test.
+phenomena sit in the packet, which a packet-reading policy sees while a
+graph-only policy does not. Leaving them unmodelled hands the packet policy
+exclusive information in 3D that it did not have in 2D, which is the opposite
+of what a representation comparison is supposed to test.
 
 Extensions are opt-in and append; the nine base nodes keep their indices, so
 ``DescentEligibility`` stays at 7 for the actor's descent gate and the planar

@@ -214,7 +214,7 @@ class MavlinkGateway:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="MATLAB to PX4 MAVLink gateway")
+    parser = argparse.ArgumentParser(description="Learner to PX4 MAVLink gateway")
     parser.add_argument("--config", required=True)
     parser.add_argument("--target", choices=("sitl", "hardware"), default="hardware")
     parser.add_argument("--device", required=True, help="serial device or pymavlink URL, e.g. udp:127.0.0.1:14550")

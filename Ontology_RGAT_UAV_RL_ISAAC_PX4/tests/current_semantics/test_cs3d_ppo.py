@@ -2,7 +2,7 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""The common PPO of guide 8.3: GAE on actual transition times, latent ratio, KL guard."""
+"""The common PPO (paper Sec. 4.1): GAE on actual transition times, latent ratio, KL guard."""
 import math
 
 import numpy as np

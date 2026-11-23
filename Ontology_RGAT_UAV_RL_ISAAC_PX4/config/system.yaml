@@ -11,6 +11,8 @@ system:
 
 network:
   bind_host: 127.0.0.1
+  # matlab_host/matlab_port: the learner-side (bridge) UDP endpoint; the key
+  # names are historical.
   matlab_host: 127.0.0.1
   gateway_port: 14650
   matlab_port: 14651
@@ -22,22 +24,20 @@ parallel:
   pair_offsets_enu_m:
     - [0.0, 0.0, 0.0]
     - [0.0, 0.0, 0.0]
-  # 두 UGV를 조사한 동일 캠퍼스 도로의 서로 다른 진행 지점에 둔다.
-  # 단순 XY 평행 이동은 차를 도로 밖에 놓고 UAV 진입 영역도 겹치므로 쓰지 않는다.
-  # 폐곡선 길이의 0/8% 지점에서 출발해 같은 waypoint를 열차처럼 순서대로 따른다.
+  # The two UGVs start at different points of the same surveyed campus road. A
+  # plain XY offset would put a vehicle off the road and overlap the UAV entry
+  # regions, so the pairs instead start at 0 % and 8 % of the closed loop's length
+  # and follow the same waypoints in order, like a train.
   route_phase_fractions: [0.0, 0.08]
-  # Pair 1의 먼 0.32 m 표식은 7--8 m 진입 고도에서 약 10 px에 불과하다.
-  # 같은 0--249 ID 범위를 유지하면서 셀당 픽셀 수가 더 큰 4x4 사전을 써서
-  # 저조도 렌더 프레임의 reset-gate 검출을 안정화한다.
+  # Pair 1's far 0.32 m marker spans only about 10 px from the 7-8 m entry
+  # altitude. A 4x4 dictionary (more pixels per cell) with the same 0-249 id range
+  # keeps reset-gate detection stable in dim rendered frames.
   marker_dictionary: DICT_4X4_250
   marker_id_stride: 60
   # Operator-only settings for the shared two-pair stage. This block is
   # excluded from the scientific config hash and cannot invalidate a policy.
   operator_view:
-    # Operator-only close side view. The experiment launcher overrides
-    # pair_index with the physical pair assigned to the proposed graph arm, so
-    # cyclic replicate counterbalancing does not make the camera follow the
-    # baseline. Actor cameras retain their scientific 512x320 resolution.
+    # Operator-only close side view; actor cameras keep their own resolution.
     viewport_resolution: [960, 540]
     frame: street
     # [along road, across road, up]: zero along-road displacement makes this a
@@ -55,12 +55,10 @@ px4:
   target_component: 1
   source_system: 42
   source_component: 191
-  # Measured with tools/calibrate_hover_thrust.py against Pegasus' Iris in
-  # Isaac. A wrong value spends the policy's collective authority just holding
+  # Measured against Pegasus' Iris in Isaac. A wrong value spends the policy's collective authority just holding
   # altitude, which reads as a vehicle that will not stop descending.
   hover_thrust: 0.580
-  # Must equal cfg.rl.collectiveSpan in the original workspace: the policy
-  # normalises its collective against hover*(1 + span*a), so a smaller span
+  # The policy normalises its collective against hover*(1 + span*a), so a smaller span
   # here silently under-actuates every transferred policy in the vertical axis.
   collective_span: 0.85
   max_roll_pitch_deg: 28.0
@@ -91,8 +89,8 @@ px4:
   # *above* landing.crash_tilt_deg below. At the PX4 defaults they do not: PX4
   # asserts fd_critical_failure at 60 deg while the learner's own tip-over
   # verdict sits at 75 deg, so every genuine tip-over reached the bridge as a
-  # hard failsafe before the environment could ever score it as a crash. On
-  # 2026-09-23 that ended a PPO run outright. 85 deg keeps the detector as the
+  # hard failsafe before the environment could ever score it as a crash.
+  # 85 deg keeps the detector as the
   # backstop it is meant to be -- a vehicle on its side -- and leaves the
   # episode outcome where it belongs, with the learner. Not 90: roll/pitch here
   # are a ZYX decomposition, whose pitch cannot exceed 90 deg at all.
@@ -466,8 +464,8 @@ battery:
   capacity_mah: 3500
   nominal_voltage_v: 11.1
   # Momentum-theory hover power model, integrated from PX4's own normalised
-  # thrust setpoint. vehicle_mass_kg is Pegasus' Iris, not the MATLAB
-  # cfg.drone.mass; this model only has to price thrust, not fly the vehicle.
+  # thrust setpoint. vehicle_mass_kg is Pegasus' Iris; this model only has to
+  # price thrust, not fly the vehicle.
   vehicle_mass_kg: 1.5
   rotor_count: 4
   rotor_radius_m: 0.13
@@ -515,8 +513,7 @@ vision:
   fusion_max_correction_m: 0.50
   camera:
     # One eye of the ZED 2i, using its 2.1 mm wide-angle lens. Stereo depth is
-    # deliberately disabled: landing pose continues to come from monocular
-    # ArUco geometry, as requested.
+    # deliberately disabled: landing pose comes from monocular ArUco geometry.
     model: stereolabs_zed2i_mono
     eye: left
     lens_focal_length_mm: 2.1

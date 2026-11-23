@@ -12,16 +12,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "isaac_sim"))
 
-from config_loader import load_config  # noqa: E402
 from wind_sensor import WindSensor  # noqa: E402
-
-
-def test_metasejong_research_pipeline_enables_wind_sensor_and_moving_pad():
-    cfg = load_config(ROOT / "config" / "metasejong-pipeline.yaml")
-    assert cfg["wind"]["enabled"] is True
-    assert cfg["wind"]["sensor"]["enabled"] is True
-    assert cfg["pad"]["motion"] == "waypoints"
-    assert cfg["pad"]["preview_motion"] is False
 
 
 def test_sensor_is_seeded_noisy_and_separate_from_truth():

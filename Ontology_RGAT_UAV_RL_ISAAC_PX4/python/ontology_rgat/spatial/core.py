@@ -34,127 +34,94 @@ from ..two_axis.ontology_v28 import GRAPH_SCHEMA_HASH as TOPOLOGY_HASH
 #: set (direct acceleration, ABG tracking, matched disturbances, capture-time
 #: optical alignment, reference supervisor). It is derived, not a ladder rung.
 #:
-#: /2 differs from /1 in exactly one law: while descent is inhibited the
-#: supervisor holds the vertical rate instead of braking a descent one-sidedly.
-#: Observation, packet, graph, reward and every capability are identical, so /1
-#: stays loadable and comparable -- see ``vertical_inhibit_holds``.
-#: /3 differs from /2 in exactly one law: the local plant applies a command
-#: only after ``REFERENCE_ACTUATION_DELAY_S`` of actuation latency, and the
-#: supervisor's stopping margin counts that latency. Measured 2026-10-06 from
-#: the first learned-policy Isaac flight (12 episodes, 0 landings, pad lost
-#: within ~1 s): a joint impulse-response fit of ground-truth lateral
-#: acceleration against the commanded one gives Isaac/PX4 h = [-0.02, 0.74,
-#: 0.24, -0.01] over 0.1 s lags -- nothing in the step the command is issued
-#: -- where the /2 plant gives [0.44, 0.15, 0.18, -0.04], i.e. responds inside
-#: the same step. Policies tuned on /2 therefore over-command in Isaac, tilt
-#: to 18-21 deg and lose the pad from the camera. With one step of latency the
-#: local fit becomes [0.04, 0.36, 0.24, 0.14]. Observation, packet, graph,
-#: reward and every capability are identical to /2, so /1 and /2 checkpoints
-#: stay loadable under their own schema; only ``config_sha256`` differs.
-#: /4 is the Isaac-calibrated vehicle, in three measured parts, each with its
-#: own tool and number (2026-10-06, after the first two learned-policy Isaac
-#: flights landed 0 of 22 episodes while the same checkpoints landed locally):
+#: Each later rung adds or removes exactly one law. Observation, packet, graph
+#: and reward stay identical unless a note says otherwise, so every rung's
+#: checkpoints load under their own schema; only ``config_sha256`` and, from
+#: /4 on, the deployment profile differ. The active rung is /12.
 #:
-#: * attitude bandwidth 14 rad/s: replaying the recorded Isaac commands through
+#: /2: while descent is inhibited the supervisor holds the vertical rate
+#: instead of braking a descent one-sidedly (``vertical_inhibit_holds``).
+#: /3: the local plant applies a command only after
+#: ``REFERENCE_ACTUATION_DELAY_S`` of actuation latency, and the supervisor's
+#: stopping margin counts that latency. A joint impulse-response fit of
+#: ground-truth lateral acceleration against the commanded one gives Isaac/PX4
+#: h = [-0.02, 0.74, 0.24, -0.01] over 0.1 s lags -- nothing in the step the
+#: command is issued -- where the /2 plant gives [0.44, 0.15, 0.18, -0.04],
+#: i.e. responds inside the same step; with one step of latency the local fit
+#: becomes [0.04, 0.36, 0.24, 0.14]. Policies tuned without the delay
+#: over-command in Isaac, tilt to 18-21 deg and lose the pad from the camera.
+#: /4: the Isaac-calibrated vehicle, in three measured parts:
+#:
+#: * attitude bandwidth 14 rad/s: replaying recorded Isaac commands through
 #:   the delayed local plant and comparing the velocity response after large
-#:   command changes (tools/audit_actuation_response.py, 146 events over 21
-#:   episodes) gives Isaac [0.34, 1.09, 1.65, 1.80] against 10 rad/s
-#:   [0.25, 0.75, 1.24, 1.49] (error 0.286) and 14 rad/s [0.41, 1.05, 1.55,
-#:   1.68] (error 0.084); 20 rad/s and above overshoot. The /3 flight still
-#:   limit-cycled laterally with the 10 rad/s policy.
+#:   command changes (146 events over 21 episodes) gives Isaac [0.34, 1.09,
+#:   1.65, 1.80] against 10 rad/s [0.25, 0.75, 1.24, 1.49] (error 0.286) and
+#:   14 rad/s [0.41, 1.05, 1.55, 1.68] (error 0.084); 20 rad/s and above
+#:   overshoot.
 #: * landing gear 0.18 m: the camera sits 0.16 m below the body and the body
-#:   touched down at 0.12 m, so the camera was 0.04 m BELOW the pad surface at
-#:   contact and lost the markers before touchdown; with the gear it stays
-#:   0.14 m above the pad, where the centre marker of the v11 board fills
-#:   ~180 px of a 640 px frame. Touchdown is at ``touchdown_height``.
+#:   touches down at 0.12 m, so without gear the camera is 0.04 m BELOW the
+#:   pad surface at contact and loses the markers before touchdown; with the
+#:   gear it stays 0.14 m above the pad, where the centre marker of the v11
+#:   board fills ~180 px of a 640 px frame. Touchdown is at
+#:   ``touchdown_height``.
 #: * the v11 marker board (config/spatial-isaac-system-v11.yaml): 17 ArUco
 #:   tags at three scales, 0.26 m corners for approach, 0.14 m mid-ring, and
 #:   0.08/0.05 m centre cluster for the last 0.3 m, in place of five.
 #:
-#: Packet, graph, ontology, reward and every capability are identical to /3,
-#: so /1-/3 checkpoints load under their own schema; only ``config_sha256``
-#: and the deployment profile differ.
-#: /5 is /4 plus one law, the OPTICAL REALISM of the local sensor: the pad is
-#: detected when at least one tag of the deployed board (read from the
-#: deployment profile) projects fully inside the frame at a decodable size,
-#: and ``detectionConfidence`` is the detector's own quality metric -- the
-#: largest seen tag's pixel side over 120 px, times a sharpness term, times
-#: 0.85 when a single tag braces the solve -- with a 5 % frame-miss rate.
-#: Measured 2026-10-06 on the third Isaac flight (12 episodes, 0 landings, 0
-#: unsafe, detection 100 % for 70 s, estimate error 5-13 cm): the one packet
-#: channel that differed between Isaac and the local replay of the SAME
-#: checkpoint on the SAME seeds by more than its own spread was
-#: ``detectionConfidence``, a constant 0.98 locally and 0.22-0.58 in Isaac,
+#: /5: the OPTICAL REALISM of the local sensor. The pad is detected when at
+#: least one tag of the deployed board (read from the deployment profile)
+#: projects fully inside the frame at a decodable size, and
+#: ``detectionConfidence`` is the detector's own quality metric -- the largest
+#: seen tag's pixel side over 120 px, times a sharpness term, times 0.85 when a
+#: single tag braces the solve -- with a 5 % frame-miss rate. Without it,
+#: ``detectionConfidence`` was a constant 0.98 locally but 0.22-0.58 in Isaac,
 #: falling with camera depth exactly as the tag-size formula predicts (0.22 at
 #: 1.8-2.6 m, 0.45 at 0.8-1.1 m, 0.58 at 0.2-0.5 m). A channel that never
-#: varied in training is an untrained direction of the policy, and in Isaac
-#: it moved every step; the policy's lateral commands were 2.5x larger and 5x
-#: jerkier than locally, the tilt stayed above the 5 deg corridor gate and
-#: the supervisor held the descent for 70 s. The estimator never reads the
-#: confidence, so this law changes what the policy sees and nothing else.
-#: /6 is /5 plus one law, the attitude servo's DAMPING. Identified 2026-10-06
-#: from the tilt traces of all four Isaac flights (46 episodes, 1360 steps):
-#: simulating the local second-order servo on the recorded commanded attitude
-#: and minimising the RMS tilt error gives a plateau at omega 9-10 rad/s,
-#: zeta 0.65-0.7, 0.10-0.12 s input delay (2.43 deg) against 2.91 deg for the
-#: /4-/5 servo (14 rad/s, zeta 1) and 2.73 deg for /3's (10, 1). The velocity
+#: varies in training is an untrained direction of the policy; in Isaac it
+#: moved every step, and the policy's lateral commands were 2.5x larger and 5x
+#: jerkier than locally. The estimator never reads the confidence, so this law
+#: changes what the policy sees and nothing else.
+#: /6: the attitude servo's DAMPING. Simulating the local second-order servo
+#: on the recorded Isaac commanded attitude (46 episodes, 1360 steps) and
+#: minimising the RMS tilt error gives a plateau at omega 9-10 rad/s, zeta
+#: 0.65-0.7, 0.10-0.12 s input delay (2.43 deg) against 2.91 deg for the /4-/5
+#: servo (14 rad/s, zeta 1) and 2.73 deg for /3's (10, 1). The velocity
 #: reversal estimator (225 events) ranks the same (10, 0.7) a close second to
-#: (14, 1) -- error 0.080 against 0.035 -- so both estimators admit it, and
-#: only zeta < 1 reproduces what ended the fourth flight's one envelope
-#: violation: a command reversal from +8.5 to -15 deg of roll that the PX4
-#: vehicle overshot to -21.2 deg at 107 deg/s. A critically damped local
-#: servo never overshoots, so no policy trained on it could learn that
-#: margin. Steady-state tilt gain is 0.90-1.02, i.e. there is no gain error
-#: to model. Packet, graph, reward and capabilities are identical to /5.
-#: /7 is /6 plus one law, the CONTACT VERDICT. Decided by the user on
-#: 2026-10-06 over the six non-landing contacts of the five-seed /6 Isaac
-#: flight (results/full_pipeline_20261006_v6_5seeds): four were vehicles that
-#: sank onto the pad from a low hover while the supervisor held the vertical
-#: rate (``vertical_stopping_margin``), touching at |vz| 0.01-0.07 m/s, and
-#: were scored UNAUTHORIZED_CONTACT (two, every touchdown limit met) or
-#: UNSAFE_CONTACT (two: body rate 10.47 deg/s; tilt 5.27 deg at 12.51 deg/s,
-#: against the 5 deg / 10 deg/s touchdown band, both at |vz| <= 0.07). Two
-#: touched inside the terminal-descent corridor at vz -0.62 and -0.38 m/s
-#: against the 0.30 m/s limit. The four were judged acceptable landings
-#: and the two not. The one rule that draws exactly that line is the IMPACT
-#: SPEED: on /7 a pad contact is UNSAFE_CONTACT when its horizontal or
-#: vertical speed exceeds the touchdown limits, SAFETY_ENVELOPE_VIOLATION
-#: when the thrust axis is past the 21 deg hard limit at contact,
-#: UNAUTHORIZED_CONTACT only while the abort hold owns the vehicle, and
-#: SUCCESS otherwise -- whether or not descent was inhibited, whatever the
+#: (14, 1) -- error 0.080 against 0.035 -- so both estimators admit it, and only
+#: zeta < 1 reproduces the PX4 overshoot after a command reversal (+8.5 to
+#: -15 deg of roll overshot to -21.2 deg at 107 deg/s). A critically damped
+#: servo never overshoots, so no policy trained on it could learn that margin.
+#: Steady-state tilt gain is 0.90-1.02, i.e. there is no gain error to model.
+#: /7: the CONTACT VERDICT by impact speed. A pad contact is UNSAFE_CONTACT when
+#: its horizontal or vertical speed exceeds the touchdown limits,
+#: SAFETY_ENVELOPE_VIOLATION when the thrust axis is past the 21 deg hard limit
+#: at contact, UNAUTHORIZED_CONTACT only while the abort hold owns the vehicle,
+#: and SUCCESS otherwise -- whether or not descent was inhibited, whatever the
 #: tilt and body rate inside the envelope. Attitude and rate remain the
-#: corridor's ``settled`` commit condition and the readiness term's price;
-#: they stop being contact criteria. The limit VALUES are unchanged. Plant,
-#: packet, graph, ontology, supervisor and terminal table are identical to
-#: /6 (guarded in tests/test_contact_verdict_rung.py). Re-scoring the
-#: recorded /6 flight under this rule gives 27 SUCCESS / 2 UNSAFE_CONTACT /
-#: 1 SAFE_ABORT; acceptance still forbids the two.
-#: /8 is /7 MINUS one law: the /4 landing gear is removed, on the user's
-#: instruction of 2026-10-06 late evening ("remove drone legs again"). The
-#: body touches down at the stock Iris height again (``touchdown_height`` =
-#: ``contact_height`` = 0.12 m), the supervisor's gate, corridor and stopping
-#: margin shift down with it (they are heights above the stock-gear
-#: touchdown), the curriculum's low start band follows, and the deployment
-#: profile is v12 = v11 with ``vehicle.landing_gear.extension_m: 0`` so the
-#: Isaac world attaches no leg colliders. The 17-tag board, optical realism,
-#: the delayed /6 servo and the /7 contact verdict are all inherited. What
-#: this gives back is the geometry /4 was built to avoid: the camera sits
-#: 0.16 m below the body, so at contact it is 0.04 m BELOW the pad plane and
-#: the last centimetres are flown on the estimator's memory (``terminal_coast``
-#: and the capture-time-aligned track), not on a detection. Whether the
-#: centre cluster of the v11 board and the /5 optical model carry that
-#: interval is what the /8 run measures; it was not measured before the legs
-#: were added.
-#: /9 is /8 plus one law, the terminal-corridor BRAKE, chosen on the user's
-#: instruction of 2026-10-07 to close the gap between the descent the
-#: supervisor admits in the corridor and the descent the contact verdict
-#: accepts. Through /8 the corridor brakes only above 1.5 x
-#: ``touchdown_z_speed`` (0.45 m/s, the 2D reference's approach margin) and
-#: removes the excess over the ~0.35 s response delay, so a policy may touch
-#: at 0.30-0.45 m/s and the verdict then scores it UNSAFE_CONTACT: on /8,
-#: 96 of 101 held-out unsafe terminals were corridor contacts at a median
-#: 0.34 m/s. Measured on the SAME 15 /8 checkpoints, 48 held-out seeds,
-#: nothing retrained (scratchpad what-if, 2026-10-07 01:19):
+#: corridor's ``settled`` commit condition and the readiness term's price; they
+#: stop being contact criteria. This separates a vehicle that settles onto the
+#: pad from a low hover (|vz| 0.01-0.07 m/s) from a corridor impact (vz -0.62
+#: or -0.38 m/s against the 0.30 m/s limit). The limit VALUES are unchanged, and
+#: plant, packet, graph, ontology, supervisor and terminal table are /6's.
+#: /8: /7 WITHOUT the /4 landing gear. The body touches down at the stock Iris
+#: height again (``touchdown_height`` = ``contact_height`` = 0.12 m), the
+#: supervisor's gate, corridor and stopping margin shift down with it (they are
+#: heights above the stock-gear touchdown), the curriculum's low start band
+#: follows, and the deployment profile is v12 = v11 with
+#: ``vehicle.landing_gear.extension_m: 0`` so the Isaac world attaches no leg
+#: colliders. The 17-tag board, optical realism, the delayed /6 servo and the
+#: /7 contact verdict are all inherited. The camera is then 0.04 m BELOW the
+#: pad plane at contact, so the last centimetres are flown on the estimator's
+#: memory (``terminal_coast`` and the capture-time-aligned track), not on a
+#: detection.
+#: /9: the terminal-corridor BRAKE, so the supervisor admits no descent in the
+#: corridor that the contact verdict rejects. Through /8 the corridor brakes
+#: only above 1.5 x ``touchdown_z_speed`` (0.45 m/s, the 2D reference's
+#: approach margin) and removes the excess over the ~0.35 s response delay, so
+#: a policy may touch at 0.30-0.45 m/s and the verdict then scores it
+#: UNSAFE_CONTACT (on /8, 96 of 101 held-out unsafe terminals were corridor
+#: contacts at a median 0.34 m/s). Replaying the same 15 /8 checkpoints on 48
+#: held-out seeds, nothing retrained:
 #:
 #: ==========================  ========  ========  =========  ======
 #: corridor brake              landing   unsafe    timeout    abort
@@ -166,59 +133,51 @@ from ..two_axis.ontology_v28 import GRAPH_SCHEMA_HASH as TOPOLOGY_HASH
 #: ==========================  ========  ========  =========  ======
 #:
 #: Neither constant alone does it; together they leave 18 of 720 contacts
-#: unsafe, every one at 0.31 m/s, with timeouts and aborts unchanged, i.e.
-#: the brake costs no landings. 0.8 x is the sink speed the reward's
-#: readiness term already asks for (``desired_z = -0.8 * touchdown_z_speed``
-#: in environment.py), so the supervisor now enforces what the reward
-#: targets. Plant, packet, graph, verdict, gear (none) and profile (v12) are
-#: /8's. Guarded in tests/test_corridor_brake_rung.py.
-#: /10 is /9 plus one law, the terminal-corridor GATE without legs, on the
-#: user's instruction of 2026-10-07 to address the blind terminal phase (the
-#: legs stay off). The corridor's lateral gate is the camera footprint, which
-#: shrinks to zero as the camera nears the pad; without legs a vehicle at
-#: 0.20-0.25 m body height faces a 0.03-0.07 m gate. In the /9 Isaac flight
-#: the packet-only arm sat 0.10-0.17 m off-centre there with a FRESH track,
-#: the vertical hold kept it from descending, it sank slowly until the pad
-#: left the frame and aborted (6 of 10) or hovered to the 70 s limit (4). /10
-#: floors the gate at 0.2 m (``terminal_gate_width_floor_m``; the commit
-#: still demands lateral + 2 std inside the 0.5 m pad) and holds the commit
-#: for 3 s instead of 1.5 (``terminal_commit_window_s``). Measured on the 15
-#: /9 checkpoints over 48 held-out seeds, nothing retrained: (0, 1.5 s) 90.0 %
-#: landing / 4.3 % unsafe / 3.6 % timeout; (0.105, 1.5) 90.8 / 4.3 / 3.2;
-#: (0.105, 3.0) 92.4 / 5.0 / 1.9; (0.2, 3.0) 92.9 / 4.7 / 1.8 -- the
-#: proposed arm's timeouts fall 10.4 -> 5.4 %. The local optical model does
-#: not reproduce the Isaac low-altitude loss for the vector arm (0 % timeout
-#: locally either way), so the Isaac flight is the test of this law.
-#: /11 is /10 plus one law, the HANDOVER LIMIT, on the user's instruction of
-#: 2026-10-07 to fix the handover tilt that failed /10's acceptance. All seven
-#: recorded Isaac SAFETY_ENVELOPE_VIOLATIONs (/2-/10) happened 0.9-1.3 s after
-#: handover and all began the same way: while the track was still not
-#: trustworthy (0.1-0.4 s) the policy issued a near-full 1.5-2.3 m/s^2 lateral
-#: command; five then reversed it in one decision when the track was trusted
-#: (-2.2 -> +2.3) and PX4 overshot past 21 deg, two held it under the seeded
-#: disturbance torque and the tilt climbed 20-30 deg/s. Locally the median
-#: peak tilt in the first 2 s is 15.8 deg and the maximum 21.0 -- no margin.
-#: /11 caps the lateral command at 2.0 m/s^2 and its change at 1.5 m/s^2 per
-#: decision for the first 2 s after handover (``handover_lateral_cap_m_s2``,
-#: ``handover_window_s``, ``handover_lateral_slew_m_s2``). Measured on the 15
-#: /10 checkpoints, 48 held-out seeds, nothing retrained: none 93.5 % landing /
-#: 4.9 % unsafe / 1.1 % abort, peak tilt max 21.0; cap 2.0 91.4 / 3.9 / 4.3,
-#: max 15.0; cap 2.0 + slew 1.5 90.8 / 4.7 / 4.0, max 14.9; cap 1.5 max 11.4
-#: but 90.3 %; braking until the track is trusted, a slew limit alone, or a
-#: measured-tilt guard all left the max at 20.5-20.7. The slew limit is kept
-#: although the local plant cannot show its benefit, because the Isaac
-#: mechanism in five of seven violations is a one-step reversal it bounds.
-#: The command 20 deg / hard 21 deg limits are unchanged.
-#: /12 is /11 plus one law, the HANDOVER THRUST FLOOR, because /11's cap did
-#: not stop the violations: its Isaac flight still had two (rgat 830 at
-#: 26.7 deg, flat 829 at 21.7 deg), both with the lateral command inside the
-#: 2.0 cap and the tilt climbing 2 deg per decision under a -1.8 m/s^2
-#: downward command. Across all 209 Isaac episodes on record the early mean
-#: applied vertical acceleration separates them cleanly: below -0.6 m/s^2
-#: 5 of 5 violated, -0.6..0 4 of 151, at or above 0 none of 53 -- reduced
-#: collective thrust is reduced attitude authority against the seeded
+#: unsafe, every one at 0.31 m/s, with timeouts and aborts unchanged, i.e. the
+#: brake costs no landings. 0.8 x is the sink speed the reward's readiness
+#: term already asks for (``desired_z = -0.8 * touchdown_z_speed`` in
+#: environment.py), so the supervisor enforces what the reward targets.
+#: /10: the terminal-corridor GATE without legs. The corridor's lateral gate is
+#: the camera footprint, which shrinks to zero as the camera nears the pad;
+#: without legs a vehicle at 0.20-0.25 m body height faces a 0.03-0.07 m gate.
+#: In Isaac a vehicle 0.10-0.17 m off-centre there with a FRESH track was held
+#: by the vertical hold, sank slowly until the pad left the frame, and aborted
+#: or hovered to the time limit. /10 floors the gate at 0.2 m
+#: (``terminal_gate_width_floor_m``; the commit still demands lateral + 2 std
+#: inside the 0.5 m pad) and holds the commit for 3 s instead of 1.5
+#: (``terminal_commit_window_s``). Replaying the 15 /9 checkpoints on 48
+#: held-out seeds, nothing retrained: (0, 1.5 s) 90.0 % landing / 4.3 % unsafe
+#: / 3.6 % timeout; (0.105, 1.5) 90.8 / 4.3 / 3.2; (0.105, 3.0) 92.4 / 5.0 /
+#: 1.9; (0.2, 3.0) 92.9 / 4.7 / 1.8. The local optical model does not
+#: reproduce the Isaac low-altitude loss, so Isaac is the test of this law.
+#: /11: the HANDOVER LIMIT. All seven recorded Isaac SAFETY_ENVELOPE_VIOLATIONs
+#: (/2-/10) happened 0.9-1.3 s after handover and began the same way: while the
+#: track was still not trustworthy (0.1-0.4 s) the policy issued a near-full
+#: 1.5-2.3 m/s^2 lateral command; five then reversed it in one decision when
+#: the track was trusted (-2.2 -> +2.3) and PX4 overshot past 21 deg, two held
+#: it under the seeded disturbance torque and the tilt climbed 20-30 deg/s.
+#: Locally the median peak tilt in the first 2 s is 15.8 deg and the maximum
+#: 21.0 -- no margin. /11 caps the lateral command at 2.0 m/s^2 and its change
+#: at 1.5 m/s^2 per decision for the first 2 s after handover
+#: (``handover_lateral_cap_m_s2``, ``handover_window_s``,
+#: ``handover_lateral_slew_m_s2``). Replaying the 15 /10 checkpoints on 48
+#: held-out seeds, nothing retrained: none 93.5 % landing / 4.9 % unsafe /
+#: 1.1 % abort, peak tilt max 21.0; cap 2.0 91.4 / 3.9 / 4.3, max 15.0; cap
+#: 2.0 + slew 1.5 90.8 / 4.7 / 4.0, max 14.9; cap 1.5 max 11.4 but 90.3 %;
+#: braking until the track is trusted, a slew limit alone, or a measured-tilt
+#: guard all left the max at 20.5-20.7. The slew limit is kept although the
+#: local plant cannot show its benefit, because the Isaac mechanism in five of
+#: seven violations is a one-step reversal it bounds. The command 20 deg /
+#: hard 21 deg limits are unchanged.
+#: /12: the HANDOVER THRUST FLOOR, because the /11 cap alone did not stop the
+#: violations in Isaac (two more, at 26.7 and 21.7 deg, both with the lateral
+#: command inside the 2.0 cap and the tilt climbing 2 deg per decision under a
+#: -1.8 m/s^2 downward command). Across all 209 recorded Isaac episodes the
+#: early mean applied vertical acceleration separates them cleanly: below
+#: -0.6 m/s^2 5 of 5 violated, -0.6..0 4 of 151, at or above 0 none of 53 --
+#: reduced collective thrust is reduced attitude authority against the seeded
 #: disturbance torque. /12 keeps the applied az >= 0 for the 2 s window.
-#: What-if on the 15 /11 checkpoints, 48 held-out seeds: /11 92.8 % landing,
+#: Replaying the 15 /11 checkpoints on 48 held-out seeds: /11 92.8 % landing,
 #: 4.7 % abort, first-2-s peak tilt max 19.7 deg; with the floor 95.7 %, 1.2 %
 #: abort, max 12.1 deg (a 1.5 cap on top gave 9.2 deg but 91.7 %).
 REFERENCE_SCHEMAS = ("spatial-reference/1", "spatial-reference/2",
@@ -231,7 +190,7 @@ REFERENCE_SCHEMA = REFERENCE_SCHEMAS[-1]
 #: /6 attitude servo: natural frequency (rad/s) and damping ratio.
 REFERENCE_ATTITUDE_SERVO_6 = (10.0, 0.7)
 #: Isaac detector quality constants (isaac_sim/marker_vision.py) and the
-#: sharpness the third flight measured (reprojection ~1.0-1.2 px of 3 px).
+#: sharpness measured in Isaac (reprojection ~1.0-1.2 px of 3 px).
 REFERENCE_OPTICAL_FULL_SCALE_PX = 120.0
 REFERENCE_OPTICAL_SHARPNESS = (0.65, 0.08)
 REFERENCE_OPTICAL_MIN_TAG_PX = 12.0
@@ -252,7 +211,7 @@ def schema_for(contract_version):
     frozen historical rungs, kept so their checkpoints stay loadable. A
     superseded reference rung is selectable by its full schema string, which is
     how ``spatial-reference/1`` -- the one-sided vertical brake -- stays
-    reachable for reproducing anything trained before 2026-10-05.
+    reachable for reproducing checkpoints trained on it.
     """
     version = str(contract_version)
     if version == "reference":
@@ -419,8 +378,8 @@ class SpatialConfig:
             start_touchdown_vertical_speed_m_s=0.6,
             # Upstream primaryConfig.m. validate_curriculum_ramp pins it below
             # SAFE_ABORT at every rung so the easy end cannot make crashing
-            # cheaper than aborting -- two_axis measured 92-98 % unsafe contact
-            # when that inverted.
+            # cheaper than aborting -- the planar task measured 92-98 % unsafe
+            # contact when that inverted.
             start_unsafe_contact_penalty=REFERENCE_CURRICULUM_START_UNSAFE,
             promotion_landing_rate=0.1,
             promotion_window_episodes=18,
@@ -605,8 +564,8 @@ class SpatialConfig:
         is tag-based: at the band's stock low end (body 0.20 m) the camera is
         0.04 m above the deck and no tag's padded quad fits the frame, so the
         estimator never initialises, the supervisor latches ``prolonged_visual
-        _loss`` at the first step and climbs. Measured 2026-10-06 on /8 with
-        the fixed-descent reachability probe: 5 of 12 easy-rung seeds ended
+        _loss`` at the first step and climbs: on /8 without the lift, a
+        fixed-descent reachability probe ended 5 of 12 easy-rung seeds in
         SAFE_ABORT where /7 landed 12 of 12. On /4-/7 the legs lifted the band
         (body 0.38-0.68 m, camera 0.22-0.52 m) as a side effect; /8 removes
         the legs and keeps the lift, so the easy rung stays the same camera
@@ -635,15 +594,15 @@ class SpatialConfig:
         """Descent the supervisor admits inside the terminal corridor, as a
         multiple of ``touchdown_z_speed``; it brakes only above this.
 
-        1.5 is the reference approach margin (two_axis/safety.py) and is what
-        every rung through /8 carries. The contact verdict needs |vz| <=
+        1.5 is the 2D reference approach margin and is what every rung
+        through /8 carries. The contact verdict needs |vz| <=
         1.0 x, so the band between 1.0 x and 1.5 x is descent the supervisor
         allows and the verdict then scores UNSAFE_CONTACT: on /7 and /8 every
         held-out unsafe terminal (74 of 720 and the /8 set) was a contact in
         that band, most of it within 0.05 m/s of the limit, and the five
-        Isaac UNSAFE_CONTACTs of the /8 flight touched at -0.30 to -0.32.
+        Isaac UNSAFE_CONTACTs on /8 touched at -0.30 to -0.32.
         /9 narrows it to 0.8 x, the reward's own sink target; see the /9
-        note above REFERENCE_SCHEMAS for the what-if that chose it.
+        note above REFERENCE_SCHEMAS for the replay that chose it.
         """
         return 0.8 if self.schema in ("spatial-reference/9", "spatial-reference/10",
                                        "spatial-reference/11",
@@ -678,10 +637,10 @@ class SpatialConfig:
         the /4-/7 legs the body never went below 0.30 m and the footprint
         never below 0.105 m. Without them (/8, /9) a vehicle that reaches
         0.20-0.25 m under the vertical hold faces a 0.03-0.07 m gate it cannot
-        meet, so the corridor never opens: measured in the /9 Isaac flight,
-        the packet-only arm sat 0.10-0.17 m off-centre at 0.22-0.26 m with a
-        fresh track, the hold kept it there until the pad left the frame, and
-        it aborted (6 of 10) or hovered to the limit. Zero keeps the
+        meet, so the corridor never opens: in Isaac on /9 a vehicle sat
+        0.10-0.17 m off-centre at 0.22-0.26 m with a fresh track, the hold kept
+        it there until the pad left the frame, and it aborted or hovered to
+        the limit. Zero keeps the
         reference law; see the /10 note above REFERENCE_SCHEMAS.
         """
         return 0.2 if self.schema in ("spatial-reference/10", "spatial-reference/11",

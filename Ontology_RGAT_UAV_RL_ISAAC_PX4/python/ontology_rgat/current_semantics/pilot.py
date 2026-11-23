@@ -2,22 +2,17 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""Guide 10 G4: the common-PPO learnability pilot on the calibrated local plant.
+"""Training on the calibrated local plant (paper Sec. 4.1).
 
-One arm (``g4_pilot.arm``, Raw by registration), each model seed trained with
-the registered PPO for ``updates`` x ``episodes_per_update`` complete episodes
-under a training-only, success-gated curriculum, validated at difficulty 1.0 with BOTH the
-deterministic mean and the sampled policy, and judged once on held-out test
-seeds against the criteria registered before the run.  Every number lands in
-the run root; nothing is selected on the test seeds.
+Each PPO update collects 12 complete episodes with the frozen current policy (in worker
+processes, every episode with its own seed), then updates the actor-critic.  A success-gated
+curriculum raises the difficulty from 0 to 1 in steps of 0.1.  ``run_episode`` also flies the
+deterministic evaluation episodes.
 """
 from __future__ import annotations
 
-from concurrent.futures import ProcessPoolExecutor
 import json
 import math
-import multiprocessing
-import os
 from pathlib import Path
 import time
 from typing import Any, Callable
@@ -25,7 +20,6 @@ from typing import Any, Callable
 import numpy as np
 import torch
 
-from . import SCHEMA_ID
 from .contracts import CurrentSemanticsConfig, contract_manifest, load_config
 
 
@@ -123,9 +117,9 @@ def run_episode(config: CurrentSemanticsConfig, arm: str, state: dict[str, Any],
                 split: str = "in_distribution", factors: Any = None,
                 dropout: Any = None) -> dict[str, Any]:
     """One complete episode on the calibrated local plant with a frozen policy, in the
-    task-v5 scenario ``split``.  ``train`` adds the registered training randomisation;
-    validation and test never do.  ``factors`` (scenario.PlantFactors) and ``dropout``
-    (contracts.VisionBlackout) are the development evaluation cells' conditions."""
+    approach-scenario ``split``.  ``train`` adds the contract's training randomisation;
+    evaluation episodes never do.  ``factors`` (scenario.PlantFactors) and ``dropout``
+    (contracts.VisionBlackout) are the evaluation cells' conditions (cells.py)."""
     from .backend import make_local_backend
 
     model = _model(config, arm, state)
@@ -193,51 +187,24 @@ def summarize(episodes: list[dict[str, Any]]) -> dict[str, Any]:
             "statuses": statuses}
 
 
-def _write(path: Path, payload: Any) -> None:
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(json.dumps(payload, indent=2, allow_nan=False) + "\n", encoding="utf-8")
-    os.replace(temporary, path)
-
-
 def _append(path: Path, row: dict[str, Any]) -> None:
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(row, allow_nan=False) + "\n")
 
 
-# ------------------------------------------------------------------ pilot
-
-def evaluate(pool: Any, arm: str, state: dict[str, Any], seeds: tuple[int, ...], *,
-             deterministic: bool, offset: int) -> dict[str, Any]:
-    tasks = [(arm, state, seed, 1.0, deterministic, seed + offset, False) for seed in seeds]
-    episodes = list(pool.map(_work, tasks))
-    return {**summarize(episodes),
-            "per_seed": [{"seed": e["seed"], "status": e.get("status"),
-                          "refused": e.get("refused")} for e in episodes]}
-
-
-LIVE_CHECKPOINT = "live.pt"   # monitor-only snapshot of the weights being trained
-LIVE_EVERY = 5                # updates between snapshots
-
+# ------------------------------------------------------------------ training
 
 def train_seed(config: CurrentSemanticsConfig, config_path: Path, model_seed: int,
                root: Path, pool: Any, *, log: Callable[[str], None],
                updates: int | None = None, stop_at_full: bool = False,
-               live_every: int = LIVE_EVERY, snapshots: tuple[int, ...] = (),
-               validate: bool = True) -> dict[str, Any]:
-    """Train one model.  ``stop_at_full`` (speed.py) ends training after the first update
-    trained at difficulty 1.0; every earlier update is unchanged.
+               snapshots: tuple[int, ...] = ()) -> dict[str, Any]:
+    """Train one model and write ``history.jsonl`` (one row per update) and ``final.pt``.
 
-    ``snapshots`` (budget.py) are training budgets B: the weights after exactly B updates are
-    written to ``budget_<B>.pt`` the same way as ``live.pt`` (a state-dict copy, no generator
-    read), so they change nothing.  ``validate=False`` skips the validation episodes and so
-    the selection of ``best.pt``; those episodes use their own seeds and never feed the
-    update, so the trained weights are the same either way.
-
-    Every ``live_every`` updates (and at each promotion) the current weights are written to
-    ``live.pt`` for the study monitor's encoding view (encoding_view.py).  The write is an
-    atomic ``save_checkpoint`` of a state-dict copy: it reads no generator and changes no
-    optimiser state, so training is bit-identical with or without it.  It is never a
-    selectable checkpoint and is removed when training ends."""
+    ``stop_at_full`` (learning speed) ends training after the first update trained at
+    difficulty 1.0; every earlier update is unchanged.  ``snapshots`` (equal budget) are
+    training budgets B: the weights after exactly B updates are written to ``budget_<B>.pt``
+    as a state-dict copy that reads no generator, so the training is the same with or
+    without them."""
     from .features import build_feature_batch
     from .models import build_model, save_checkpoint
     from .ppo import PPOTrainer, build_batch
@@ -247,16 +214,14 @@ def train_seed(config: CurrentSemanticsConfig, config_path: Path, model_seed: in
     updates = g4.updates if updates is None else int(updates)
     manifest = contract_manifest(config)
     root.mkdir(parents=True, exist_ok=True)
-    history, validation = root / "history.jsonl", root / "validation.jsonl"
-    live = root / LIVE_CHECKPOINT
-    for path in (history, validation, live, *(root / f"budget_{b}.pt" for b in snapshots)):
+    history = root / "history.jsonl"
+    for path in (history, *(root / f"budget_{b}.pt" for b in snapshots)):
         path.unlink(missing_ok=True)
     torch.manual_seed(0)  # nothing should read it; models use private generators
     model = build_model(g4.arm, config, seed=model_seed)
     trainer = PPOTrainer(model, g4.ppo)
     generator = torch.Generator().manual_seed(1_000_003 + model_seed)
     features = lambda vectors: build_feature_batch(vectors, config)
-    best, best_key = None, None
     curriculum, at_full = Curriculum(g4.curriculum), 0
     stopped = None
     started = time.monotonic()
@@ -281,10 +246,6 @@ def train_seed(config: CurrentSemanticsConfig, config_path: Path, model_seed: in
                             extra={"update": update, "budget": update + 1,
                                    "model_seed": model_seed,
                                    "difficulty": float(difficulty)})
-        if live_every and (update % live_every == 0 or promoted):
-            save_checkpoint(live, model, manifest=manifest,
-                            extra={"update": update, "model_seed": model_seed, "live": True,
-                                   "difficulty": float(curriculum.difficulty)})
         if promoted:
             log(f"seed {model_seed} promoted to difficulty {curriculum.difficulty:.1f} "
                 f"after update {update}")
@@ -296,97 +257,14 @@ def train_seed(config: CurrentSemanticsConfig, config_path: Path, model_seed: in
         if stop_at_full and difficulty >= 1.0:
             stopped = update
             break
-        last = update == updates - 1
         at_full += difficulty >= 1.0
-        if validate and difficulty >= 1.0 and (at_full % g4.validate_every == 0 or last):
-            state = {k: v.detach().clone() for k, v in model.state_dict().items()}
-            det = evaluate(pool, g4.arm, state, g4.validation_seeds, deterministic=True,
-                           offset=11_000_000)
-            smp = evaluate(pool, g4.arm, state, g4.validation_seeds, deterministic=False,
-                           offset=13_000_000)
-            _append(validation, {"update": update, "deterministic": det, "sampled": smp})
-            key = (det["success"] or 0.0, smp["success"] or 0.0, det["mean_return"] or -math.inf)
-            log(f"seed {model_seed} validation @ {update}: det {det['success']:.2f} "
-                f"sampled {smp['success']:.2f} return {det['mean_return']:.1f}")
-            if best_key is None or key > best_key:
-                best_key, best = key, update
-                save_checkpoint(root / "best.pt", model, manifest=manifest,
-                                extra={"update": update, "model_seed": model_seed})
     save_checkpoint(root / "final.pt", model, manifest=manifest,
                     extra={"update": updates - 1 if stopped is None else stopped,
                            "model_seed": model_seed})
-    live.unlink(missing_ok=True)
-    out = {"model_seed": model_seed, "updates": updates, "best_update": best,
-           "best_validation_key": list(best_key) if best_key else None,
+    out = {"model_seed": model_seed, "updates": updates,
            "final_training_difficulty": curriculum.difficulty,
            "updates_at_full_difficulty": at_full,
            "wall_s": time.monotonic() - started}
     if stop_at_full:
         out["stopped_at_full"] = stopped
     return out
-
-
-def test_checkpoint(config: CurrentSemanticsConfig, path: Path, pool: Any) -> dict[str, Any]:
-    from .models import build_model, load_checkpoint
-    model = build_model(config.g4.arm, config, seed=0)
-    meta = load_checkpoint(path, model, manifest=contract_manifest(config))
-    state = {k: v.detach().clone() for k, v in model.state_dict().items()}
-    return {"checkpoint": str(path), "update": meta["extra"].get("update"),
-            "deterministic": evaluate(pool, config.g4.arm, state, config.g4.test_seeds,
-                                      deterministic=True, offset=17_000_000),
-            "sampled": evaluate(pool, config.g4.arm, state, config.g4.test_seeds,
-                                deterministic=False, offset=19_000_000)}
-
-
-def run_pilot(config_path: Path, root: Path, *, log: Callable[[str], None] = print,
-              updates: int | None = None, workers: int | None = None,
-              arm: str | None = None) -> dict[str, Any]:
-    """Train every registered model seed, test each selected checkpoint, judge G4.
-
-    ``updates``/``workers`` overrides exist for tests only; a G4 verdict is
-    written only when the registered budget ran (``protocol_complete``).  ``arm``
-    runs the same protocol for another arm (ORL, orl.py); the registered pilot is Raw.
-    """
-    config = load_config(config_path)
-    if arm is not None:
-        from dataclasses import replace
-        config = replace(config, g4=replace(config.g4, arm=arm))
-    g4 = config.g4
-    manifest = contract_manifest(config)
-    # A ProcessPoolExecutor, not multiprocessing.Pool: a worker that dies raises
-    # BrokenProcessPool here instead of being respawned forever (a silent hang).
-    count = g4.workers if workers is None else int(workers)
-    seeds_out, tests = [], {}
-    with ProcessPoolExecutor(max_workers=count, mp_context=multiprocessing.get_context("spawn"),
-                             initializer=_init_worker,
-                             initargs=(str(config_path),)) as pool:
-        for model_seed in g4.model_seeds:
-            seed_root = Path(root) / f"seed{model_seed}"
-            seeds_out.append(train_seed(config, config_path, model_seed, seed_root, pool,
-                                        log=log, updates=updates))
-            best = seed_root / "best.pt"
-            tests[str(model_seed)] = (test_checkpoint(config, best, pool) if best.exists()
-                                      else {"checkpoint": None,
-                                            "note": "no checkpoint reached difficulty 1.0"})
-    criteria = g4.criteria
-    verdicts = {}
-    for key, test in tests.items():
-        det = (test.get("deterministic") or {}).get("success")
-        smp = (test.get("sampled") or {}).get("success")
-        verdicts[key] = {"deterministic_success": det, "sampled_success": smp,
-                         "passed": (det is not None and smp is not None
-                                    and det >= criteria.deterministic_success_min
-                                    and smp >= criteria.sampled_success_min)}
-    complete = updates is None
-    report = {"schema_id": SCHEMA_ID, "stage": "G4 learnability pilot", "arm": g4.arm,
-              "protocol": g4.protocol,
-              "backend": "spatial_local_v12", "protocol_complete": complete,
-              "hashes": {key: manifest[key] for key in ("g4_hash", "algorithm_hash", "task_hash",
-                                                        "calibration_hash", "g3_hash")},
-              "criteria": {"deterministic_success_min": criteria.deterministic_success_min,
-                           "sampled_success_min": criteria.sampled_success_min},
-              "seeds": seeds_out, "tests": tests, "verdicts": verdicts,
-              "learnability_passed": complete and all(v["passed"] for v in verdicts.values()),
-              "note": (f"{g4.arm} only, local plant; a learnability pilot, not a comparison "
-                       "of arms and not an Isaac result")}
-    return report

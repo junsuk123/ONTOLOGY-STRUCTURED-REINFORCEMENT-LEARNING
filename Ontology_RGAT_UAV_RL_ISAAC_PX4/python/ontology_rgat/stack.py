@@ -4,20 +4,15 @@
 
 """Own the DDS agent, Isaac Sim/PX4 and the gateway processes.
 
-Port of the retired ``matlab/src/+stack/ExternalStack.m``. The pipeline needs
-three long-lived processes that are normally started by hand in three
-terminals. This starts them in the order ``docs/OPERATIONS.md`` requires, waits
-for each readiness signal, and guarantees that whatever it started is stopped
-again, including on error.
+A flight needs three long-lived processes that are normally started by hand
+in three terminals. This starts them in order (the uXRCE-DDS agent, Isaac Sim
+with PX4 SITL, then the gateways), waits for each readiness signal, and
+guarantees that whatever it started is stopped again, including on error.
 
 Processes that are already running are adopted, not restarted, and are left
 alone on teardown: a session the user started by hand is theirs.
 
-One thing got simpler in the port. MATLAB prepends its own runtime to the
-loader path, which breaks ROS 2 and Isaac, so the MATLAB version had to scrub
-``LD_LIBRARY_PATH`` and friends out of every child's environment. A plain
-Python process does not do that, so the children inherit the environment they
-would get from a terminal.
+The children inherit the environment they would get from a terminal.
 """
 from __future__ import annotations
 
@@ -43,12 +38,12 @@ _KEEP = object()   # "no argument", distinct from an explicit None
 
 
 def current(new_stack: Any = _KEEP) -> "ExternalStack | None":
-    """The stack the running pipeline owns, or ``None``.
+    """The stack the running flight session owns, or ``None``.
 
-    ``env.LandingEnv.reset`` consults this to recover from a simulator that has
-    stopped accepting arm commands, which PX4 SITL does after long sessions.
-    Only the pipeline registers a stack; a hand-started stack is never
-    restarted from under the user.
+    The spatial lifecycle (``spatial.lifecycle``) consults this to recover from
+    a simulator that has stopped accepting arm commands, which PX4 SITL does
+    after long sessions. Only ``live_stack`` registers a stack; a hand-started
+    stack is never restarted from under the user.
     """
     global _registered
     if new_stack is not _KEEP:
@@ -160,8 +155,8 @@ def _exit_status(code: int | None) -> str:
     return f"exited with status {code}"
 
 
-# One directory per run, under the project so the logs live with the results
-# and reach Synology Drive. Computed once per process: a run that rebuilds the
+# One directory per run, under the project so the logs live with the results.
+# Computed once per process: a run that rebuilds the
 # simulator ten times keeps all ten generations side by side rather than
 # scattering them across ten directories.
 _RUN_STAMP = datetime.now().strftime("%Y%m%d-%H%M")
@@ -504,11 +499,8 @@ class ExternalStack:
         """
         log = self.log_dir / f"{name}.log"
         # Each launch truncates its log, so a relaunch erases the evidence of
-        # the startup that just failed. Keeping one previous attempt was not
-        # enough: on 2026-09-24 the simulator was rebuilt every twenty minutes
-        # and the log that explained a failure was overwritten twice before
-        # anyone read it. Every generation is kept now, numbered in launch
-        # order, inside a directory that is already per-run.
+        # the startup that just failed. Every generation is kept, numbered in
+        # launch order, inside a directory that is already per-run.
         if log.is_file() and log.stat().st_size:
             generation = 1
             while (self.log_dir / f"{name}.{generation:03d}.log").exists():

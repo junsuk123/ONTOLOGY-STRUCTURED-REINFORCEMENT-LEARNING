@@ -4,16 +4,16 @@
 
 """The gateway has to say something when it stops answering.
 
-2026-09-24 it stopped serving UDP roughly four times an hour, for longer than
-the 45 s the learner waits, and the only trace was silence: no exception, no
+It can stop serving UDP for longer than the 45 s the learner waits, and the
+only trace is silence: no exception, no
 last words beyond whatever routine line preceded the gap. Three explanations
 fit that evidence equally well -- blocked on the control lock, blocked inside a
-DDS publish, starved of CPU -- and nothing in the log chose between them.
+DDS publish, starved of CPU -- and nothing in the log chooses between them.
 
 Two timers share ``control_lock`` and the executor has two threads, so one
 callback blocking while it holds the lock stops the UDP replies and the
-OFFBOARD heartbeat together. That is the pair of symptoms that was actually
-observed, which is why the watchdog reports the lock holder by name.
+OFFBOARD heartbeat together. That is the pair of symptoms observed, which is
+why the watchdog reports the lock holder by name.
 """
 from __future__ import annotations
 
@@ -72,11 +72,11 @@ def test_the_dump_names_the_thread_and_where_it_is_blocked():
 
 
 def test_a_late_reply_is_attributed_to_the_node_or_to_its_input():
-    """The first pass measured the wrong thing, and said so.
+    """A late reply is not always a wedged node.
 
-    2026-09-24, one hour with the lock and timer instrumentation live: five
-    learner timeouts, zero wedge reports. The node was serving throughout. The
-    state reply is deferred -- ``_on_udp`` records the sequence owed and
+    With the lock and timer instrumentation live, learner timeouts occurred
+    with zero wedge reports: the node was serving throughout. The state reply
+    is deferred -- ``_on_udp`` records the sequence owed and
     ``_on_odometry`` sends it -- so a healthy gateway owes the learner an
     answer indefinitely whenever PX4 stops publishing odometry. A stall report
     that cannot tell those apart sends the next reader to the wrong process.

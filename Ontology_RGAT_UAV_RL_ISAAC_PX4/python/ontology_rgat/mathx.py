@@ -4,9 +4,8 @@
 
 """Quaternion and angle helpers.
 
-Ported from the retired MATLAB ``+mathx`` package. The convention is the one
-the whole workspace uses: quaternions are ``[w x y z]`` in ENU/FLU, and Euler
-angles are intrinsic Z-Y-X (yaw, pitch, roll) returned as ``[roll pitch yaw]``.
+The convention is the one the whole package uses: quaternions are
+``[w x y z]`` in ENU/FLU, and Euler angles are intrinsic Z-Y-X (yaw, pitch, roll) returned as ``[roll pitch yaw]``.
 """
 from __future__ import annotations
 

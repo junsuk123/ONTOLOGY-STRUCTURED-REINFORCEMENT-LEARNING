@@ -4,7 +4,7 @@
 
 """Canonical, causal actor-observation registry and packet.
 
-The registry is the authority for both learned arms.  It records provenance,
+The registry is the authority for the policies that read it.  It records provenance,
 normalisation and order before values are flattened, so a truth channel cannot
 be hidden in a vector by renaming it downstream.
 """

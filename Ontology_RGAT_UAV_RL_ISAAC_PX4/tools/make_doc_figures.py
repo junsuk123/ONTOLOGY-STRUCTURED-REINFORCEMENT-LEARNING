@@ -2,28 +2,26 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""Paper and README figures for the ORL landing policy (docs/figures/*.png, *.svg).
+"""Figures of the paper drawn from the code.
 
-    python3 tools/make_doc_figures.py all         # every figure
-    python3 tools/make_doc_figures.py overall | architecture | graph | field | speed | budget | isaac
-    python3 tools/make_doc_figures.py all --formats tif,eps --out DIR   # IJCAS submission files
+    python3 tools/make_doc_figures.py all                 # every figure into results/figures
+    python3 tools/make_doc_figures.py architecture | overall | field | trajectory
+    python3 tools/make_doc_figures.py all --formats tif,eps,pdf --out DIR   # submission files
 
-Diagrams are drawn from the code: the proposed ORL policy's nodes, edges, slots and sizes from
-current_semantics/orl.py (version ORL_VERSION), the approach field from current_semantics/reward.py.
-``speed`` plots the registered learning-speed/1 verdict (results/.../learning_speed/learning_speed.json),
-``budget`` equal-budget/1 (equal_budget.json) and ``isaac`` isaac-equal-budget/1 (isaac_equal_budget.json
-with its paired local_reference.jsonl).  These three result plots keep every letter at 8-12 pt.
+- ``architecture`` (Fig. 1): the system pipeline.
+- ``overall`` (Fig. 3): the ORL and MLP PPO actors; nodes, edges, slots and parameter counts
+  are read from current_semantics/orl.py and models.py.
+- ``field`` (Fig. 4): the scenario draw and the desired velocity field of the reward,
+  computed by current_semantics/reward.py.
+- ``trajectory`` (Fig. 9): one Isaac Sim-PX4 case replayed on the local plant (the Isaac flights
+  kept no time series); the replay must reproduce the stored local result of that case.
 
-Every figure is sized for the IJCAS page (International Journal of Control, Automation, and
-Systems; Manuscript Template of 2026-02-19 and its final-submission checklist): two columns of
-80 mm with 8 mm between them, so a full-width figure is 168 mm; body text Times New Roman 10 pt;
-the caption goes below the figure, so no figure carries its own title or footnote; line figures
-600 dpi, colour figures at least 300 dpi and still readable when printed in grey.  Font sizes in
-this module are therefore points AT PRINT SIZE (no text below MIN_PT).  Diagrams are drawn on a
-larger sheet in sheet units; ``save`` scales their text by the sheet-to-print ratio and checks the
-printed sizes, overlapping text and text leaving its box.  PNG files are 600 dpi at print width
-and SVG files declare the print width.  The result figures of the earlier navigation-degradation
-study (registered R-GAT arm) were archived on 2026-11-20 (archive/non_orl_20261120.tar.zst).
+The published figures were finished from these outputs; docs/figures holds them as printed.
+Every figure is sized for the journal page: 168 mm full width (two 80 mm columns, 8 mm gap), no
+title or caption inside a figure, at least 7 pt lettering at print size.  Font sizes in this
+module are points at print size; ``save`` scales diagram text by the sheet-to-print ratio and
+checks the printed sizes, overlapping text and text leaving its box.  PNG files are 600 dpi at
+print width and SVG files declare the print width.
 """
 from __future__ import annotations
 
@@ -31,7 +29,6 @@ import argparse
 import json
 import math
 import sys
-from collections import defaultdict
 from pathlib import Path
 
 import matplotlib
@@ -41,12 +38,10 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 from matplotlib.patches import (Circle, Ellipse, FancyArrowPatch, FancyBboxPatch,  # noqa: E402
                                 Rectangle)
-from matplotlib.path import Path as MplPath  # noqa: E402
 
 PACKAGE = Path(__file__).resolve().parents[1]
-REPO = PACKAGE.parent
 sys.path.insert(0, str(PACKAGE / "python"))
-OUT = REPO / "docs" / "figures"
+OUT = PACKAGE / "results" / "figures"   # not docs/figures: those are the paper's own images
 RESULTS = PACKAGE / "results" / "current_semantics_3d"
 CONFIG = PACKAGE / "config" / "current_semantics" / "spatial_view_contact_v1.yaml"
 
@@ -63,7 +58,7 @@ PLOT_RC = {"font.size": P_BODY, "axes.titlesize": P_HEAD, "axes.labelsize": P_BO
 DPI = 600                     # line figures (IJCAS); colour figures need >= 300
 PAD_IN = 0.04                  # margin around a figure on the page [in]
 PLOT_W = TEXT_MM / 25.4 - 2 * PAD_IN   # result-plot width that prints at 168 mm with that margin
-FORMATS = ("png", "svg")       # docs/figures; --formats adds tif / eps / pdf for submission
+FORMATS = ("png", "svg")       # --formats adds tif / eps / pdf for submission
 
 plt.rcParams.update({"font.family": "serif",
                      "font.serif": ["Nimbus Roman", "Liberation Serif", "DejaVu Serif"],
@@ -80,7 +75,7 @@ C = {"sim": ("#EEF1F3", "#2B2B2B"), "est": ("#CEDCF6", "#6E98DA"), "know": ("#DD
 DASH = "#2F6EA6"          # dashed containers and zoom connectors
 INK, MUTED, GRID = "#1F1F1F", "#5A5A5A", "#E4E4E4"
 PROPOSED, OTHER = "#C0634B", "#9A9A9A"
-# relation types: validated categorical slots 1-5 (scripts/validate_palette.js, light surface);
+# relation types: slots 1-5 of a contrast-checked categorical palette (light surface);
 # every relation is also named in the legend and drawn with its own line style
 RELATION_STYLE = {
     "qualifiesEstimate": ("#2a78d6", "-"),
@@ -88,7 +83,7 @@ RELATION_STYLE = {
     "affectsVisibility": ("#1baf7a", (0, (1.2, 1.6))),
     "conditionsContact": ("#eda100", (0, (6, 2, 1.5, 2))),
     "informsLanding": ("#e87ba4", "-"),
-    # ORL's two decision relations: categorical slots 6-7 (same validator, 7-slot palette passes)
+    # ORL's two decision relations: slots 6-7 of the same palette
     "gatesDescent": ("#008300", (0, (8, 2))),
     "informsVertical": ("#6250d6", (0, (2, 1.2, 6, 1.2))),
 }
@@ -307,11 +302,6 @@ def _rect(ax, x, y, w, h, text, role, size=BODY, weight="normal", z=3):
             color=INK, zorder=z + 1, linespacing=1.15)
 
 
-def _ellipse(ax, cx, cy, w, h, text, size=BODY):
-    ax.add_patch(Ellipse((cx, cy), w, h, fc="white", ec=INK, lw=1.4, zorder=3))
-    ax.text(cx, cy, text, ha="center", va="center", fontsize=size, color=INK, zorder=4, linespacing=1.15)
-
-
 def _line(ax, pts, color=INK, lw=2.0, ls="-", head=True, size=12, z=2):
     xs, ys = zip(*pts)
     if head:
@@ -350,7 +340,7 @@ def _zoom(ax, a, b):
 
 
 
-ORL_VERSION = "orl/1"     # the proposed model of learning-speed/1 (status doc 21)
+ORL_VERSION = "orl/1"     # the proposed model of the paper
 ORL_SHORT = {"ObservationQuality": "Q", "VerticalState": "V", "HeadingState": "H",
              "RelativeGeometry": "G", "MotionState": "M", "AttitudeState": "A",
              "ApproachSituation": "P", "ViewGeometry": "O", "ContactCondition": "C",
@@ -772,163 +762,6 @@ def architecture():
 
 # ----------------------------------------------------------------------------- 2 model
 # ----------------------------------------------------------------------------- 3 graph
-def _qpt(p, c, q, t):
-    u = 1.0 - t
-    return (u * u * p[0] + 2 * u * t * c[0] + t * t * q[0], u * u * p[1] + 2 * u * t * c[1] + t * t * q[1])
-
-
-def _in_ellipse(x, centre, ab):
-    return ((x[0] - centre[0]) / ab[0]) ** 2 + ((x[1] - centre[1]) / ab[1]) ** 2 < 1.0
-
-
-def _qcut(p, c, q, centre, ab, t_from, t_to):
-    """The curve parameter, moving from ``t_from`` to ``t_to``, where it leaves the ellipse of
-    semi-axes ``ab`` around ``centre``."""
-    lo, hi, prev = t_from, t_to, t_from
-    for i in range(1, 41):
-        t = t_from + (t_to - t_from) * i / 40
-        if not _in_ellipse(_qpt(p, c, q, t), centre, ab):
-            lo, hi = prev, t
-            break
-        prev = t
-    for _ in range(24):
-        mid = (lo + hi) / 2
-        if not _in_ellipse(_qpt(p, c, q, mid), centre, ab):
-            hi = mid
-        else:
-            lo = mid
-    return hi
-
-
-def _route_edge(p, q, obstacles, ab, *, clearance, step, cut_source, cut_target, tries=24):
-    """A quadratic edge from node centre ``p`` to ``q``, bent just enough to keep every other
-    node (an ellipse of semi-axes ``ab``) at least ``clearance`` away, or as far as it can, and
-    trimmed ``cut_source`` / ``cut_target`` outside the two end nodes: (start, control, end) of
-    the drawn curve.  The monitor's encoding view routes its edges the same way, with circles
-    (monitor.py ``routeEdges``)."""
-    dx, dy = q[0] - p[0], q[1] - p[1]
-    length = math.hypot(dx, dy)
-    nx, ny = -dy / length, dx / length
-    mid = ((p[0] + q[0]) / 2, (p[1] + q[1]) / 2)
-    grown = (ab[0] + clearance, ab[1] + clearance)
-    best, best_clear = None, -1.0
-    for j in range(tries + 1):
-        k = 0 if j == 0 else (1 if j % 2 else -1) * math.ceil(j / 2)
-        c = (mid[0] + nx * k * step, mid[1] + ny * k * step)
-        clear = min((math.hypot((x[0] - o[0]) / grown[0], (x[1] - o[1]) / grown[1])
-                     for x in (_qpt(p, c, q, i / 40) for i in range(1, 40)) for o in obstacles),
-                    default=math.inf)
-        if clear >= 1.0:
-            best = c
-            break
-        if clear > best_clear:
-            best, best_clear = c, clear
-    c = best
-    t0 = _qcut(p, c, q, p, (ab[0] + cut_source, ab[1] + cut_source), 0.0, 1.0)
-    t1 = _qcut(p, c, q, q, (ab[0] + cut_target, ab[1] + cut_target), 1.0, 0.0)
-    start, end = _qpt(p, c, q, t0), _qpt(p, c, q, t1)
-    d0 = (2 * (1 - t0) * (c[0] - p[0]) + 2 * t0 * (q[0] - c[0]),
-          2 * (1 - t0) * (c[1] - p[1]) + 2 * t0 * (q[1] - c[1]))
-    half = (t1 - t0) / 2
-    return start, (start[0] + half * d0[0], start[1] + half * d0[1]), end
-
-
-def graph():
-    """The ORL ontology graph: both planes, the shared state concepts and the decision nodes
-    (print millimetres, 1 unit = 1 mm at 168 mm)."""
-    orl = _orl()
-    spec = orl.GRAPHS[ORL_VERSION]
-    semantic = [e for e in spec.edges if e[2] != orl.SELF]
-    dims = orl.input_dimensions()
-    W, H = TEXT_MM, 116.0
-    fig, ax = canvas(W, H)
-    S, X1, X2, X3 = 11.0, 37.0, 87.0, 131.0
-    # x plane on top, its mirror image (y plane) below; the shared state concepts sit between
-    # the planes on the left, the decision nodes on the right
-    xs_obs, ys_obs = (99.0, 85.0, 71.0), (23.0, 37.0, 51.0)
-    pos = {"RelativeGeometry_x": (X1, xs_obs[0]), "MotionState_x": (X1, xs_obs[1]),
-           "AttitudeState_x": (X1, xs_obs[2]),
-           "RelativeGeometry_y": (X1, ys_obs[0]), "MotionState_y": (X1, ys_obs[1]),
-           "AttitudeState_y": (X1, ys_obs[2]),
-           "ObservationQuality": (S, 75.0), "VerticalState": (S, 61.0), "HeadingState": (S, 47.0),
-           "ApproachSituation_x": (X2, 98.0), "ViewGeometry_x": (X2, 84.5), "ContactCondition_x": (X2, 71.0),
-           "ApproachSituation_y": (X2, 24.0), "ViewGeometry_y": (X2, 37.5), "ContactCondition_y": (X2, 51.0),
-           "LateralDecision_x": (X3, 91.0), "LateralDecision_y": (X3, 31.0),
-           "DescentEligibility": (X3, 67.0), "VerticalDecision": (X3 + 25.0, 55.0)}
-    names = {"ObservationQuality": "Observation\nQuality", "VerticalState": "Vertical\nState",
-             "HeadingState": "Heading\nState", "RelativeGeometry": "Relative\nGeometry",
-             "MotionState": "Motion\nState", "AttitudeState": "Attitude\nState",
-             "ApproachSituation": "Approach\nSituation", "ViewGeometry": "View\nGeometry",
-             "ContactCondition": "Contact\nCondition", "LateralDecision": "Lateral\nDecision",
-             "DescentEligibility": "Descent\nEligibility", "VerticalDecision": "Vertical\nDecision"}
-
-    def concept(node):
-        return node.rsplit("_", 1)[0] if node.endswith(("_x", "_y")) else node
-
-    def role(node):
-        c = concept(node)
-        if c in orl.SHARED_ROLES:
-            return "est"
-        if c in ("RelativeGeometry", "MotionState", "AttitudeState"):
-            return "kg"
-        if c in ("ApproachSituation", "ViewGeometry", "ContactCondition"):
-            return "know"
-        return "pol"
-
-    A, B = 9.6, 5.4                      # node ellipse semi-axes [mm]
-    for x, title in (((S + X1) / 2, "observed state"), (X2, "landing situations"),
-                     (X3 + 11.0, "decisions")):
-        ax.text(x, H - 3.0, title, ha="center", va="center", fontsize=HEAD, weight="bold", color=INK)
-    # plane bands
-    for (y0, y1, name) in ((63.5, 107.5, "x plane"), (15.0, 58.5, "y plane")):
-        ax.add_patch(FancyBboxPatch((X1 - A - 3.0, y0), X3 + A + 3.0 - (X1 - A - 3.0), y1 - y0,
-                                    boxstyle="round,pad=0,rounding_size=1.2", fc="#F6F6F6", ec="#D0D0D0",
-                                    lw=1.0, zorder=0))
-        ax.text(X3 + A + 1.8, y1 - 2.4 if name == "x plane" else y0 + 2.4, name, ha="right",
-                va="center", fontsize=BODY, color=MUTED, style="italic")
-    for (src, dst, rel) in semantic:
-        others = [pos[n] for n in pos if n not in (src, dst)]
-        start, control, end = _route_edge(pos[src], pos[dst], others, (A, B), clearance=1.2,
-                                          step=1.5, cut_source=0.9, cut_target=1.1)
-        color, ls = RELATION_STYLE[rel]
-        ax.add_patch(FancyArrowPatch(path=MplPath([start, control, end],
-                                                  [MplPath.MOVETO, MplPath.CURVE3, MplPath.CURVE3]),
-                                     arrowstyle="-|>", mutation_scale=11, color=color,
-                                     lw=2.2 if rel in ("informsLanding", "informsVertical") else 1.7,
-                                     linestyle=ls, zorder=2))
-    for n, (x, y) in pos.items():
-        fc, ec = C[role(n)]
-        ax.add_patch(Ellipse((x, y), 2 * A, 2 * B, fc=fc, ec=ec if role(n) != "kg" else INK, lw=1.6,
-                             zorder=4))
-        ax.add_patch(Ellipse((x, y), 2 * A + 1.6, 2 * B + 1.6, fc="none", ec=MUTED, lw=0.9,
-                             ls=(0, (1.5, 1.5)), zorder=3))
-        c = concept(n)
-        text = names[c] + (f" {n[-1]}" if n.endswith(("_x", "_y")) else "")
-        ax.text(x, y, text, ha="center", va="center", fontsize=NOTE, color=INK, zorder=5,
-                linespacing=1.0)
-        if c in dims:
-            badge = ax.text(x + A * 0.80, y + B * 0.80, str(dims[c]), fontsize=MIN_PT, color=INK,
-                            zorder=6, ha="center", va="center",
-                            bbox=dict(boxstyle="circle,pad=0.12", fc="white", ec=INK, lw=0.7))
-            badge._on_rim = True          # sits on the node outline by design
-    # legend: two rows under the planes
-    counts = defaultdict(int)
-    for _, _, r in semantic:
-        counts[r] += 1
-    entries = [(r, f"{r} ({counts[r]})") for r in orl.RELATIONS if r != orl.SELF]
-    col_w = (W - 4.0) / 4
-    for i, (r, label) in enumerate(entries):
-        color, ls = RELATION_STYLE[r]
-        lx, ly = 2.0 + (i % 4) * col_w, 10.0 - (i // 4) * 5.6
-        ax.plot([lx, lx + 7.0], [ly, ly], color=color, lw=2.2, ls=ls)
-        ax.text(lx + 8.5, ly, label, fontsize=BODY, color=INK, va="center")
-    lx, ly = 2.0 + 3 * col_w, 4.4
-    ax.add_patch(Ellipse((lx + 3.5, ly), 6.0, 3.6, fc="white", ec=MUTED, lw=0.9, ls=(0, (1.5, 1.5))))
-    ax.text(lx + 8.5, ly, "self loop on every node", fontsize=BODY, color=INK, va="center")
-    save(fig, "ontology_graph")
-
-
-# ----------------------------------------------------------------------------- 4 task + field
 def field():
     from ontology_rgat.current_semantics.contracts import load_config
     from ontology_rgat.current_semantics.reward import desired_velocity
@@ -1037,311 +870,213 @@ def _plot(build):
     return run
 
 
-SPEED_RESULT = RESULTS / "spatial_current_semantics_v1" / "learning_speed" / "learning_speed.json"
-SPEED_ARMS = (("orl", "ORL (proposed)"), ("untyped_gnn_ppo", "Untyped GNN"),
-              ("raw_ppo", "PPO (raw obs.)"))
+# One case of the closed-loop Isaac Sim-PX4 evaluation (paper Sec. 5.3), replayed on the local
+# plant: isaac_run flew with trace=False, so no Isaac time series exists.  The case is the ORL
+# success (Isaac and local reference both SUCCESS) whose Isaac policy flight time is closest to
+# the median of the 140 ORL Isaac successes (6.77 s): training seed 59, budget 600,
+# composition_id, environment seed 994503.
+TRAJECTORY_CASE = {"training_seed": 59, "condition": "composition_id", "seed": 994503}
+VIEW_LOST_S = 0.5     # the reward field's lost-view onset (task.reward.field.lost_view.after_s)
+
+
+def _replay_case(case):
+    """Fly ``case`` exactly as budget.isaac_local_reference flew it (same checkpoint, cell
+    conditions, environment and action seeds, deterministic policy), recording the plant's
+    world-frame drone and pad state after the reset and after every decision.  The replay must
+    reproduce the stored local reference (status and decision count) or nothing is drawn."""
+    from dataclasses import asdict
+
+    import torch
+    from ontology_rgat.current_semantics import budget as bud
+    from ontology_rgat.current_semantics import cells
+    from ontology_rgat.current_semantics import pilot
+    from ontology_rgat.current_semantics.backend import make_local_backend
+    from ontology_rgat.current_semantics.contracts import load_config
+
+    torch.set_num_threads(1)            # the reference ran in single-threaded workers
+    root = RESULTS / "spatial_current_semantics_v1"
+    config = load_config(CONFIG)
+    plan = bud.load_plan(bud.DEFAULT_PATH, config)
+    arm = plan.proposed_arm
+    key = f"{case['training_seed']}/{arm}"
+    path = bud.checkpoint(root, key, max(plan.budgets))
+    if not path.exists():
+        raise SystemExit(f"no checkpoint {path}")
+    model, _ = bud.load_weights(bud.arm_config(config, plan, arm), arm, path)
+    state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+    cell = asdict(plan.cell(case["condition"]))
+    factors, dropout = cells.cell_conditions(config, cell, plan.dropout_start_s)
+    reference = [json.loads(line) for line in
+                 (bud.isaac_dir(root) / bud.LOCAL_REFERENCE).read_text().splitlines() if line]
+    reference = next(r for r in reference if r["model"] == key
+                     and r["condition"] == case["condition"] and r["seed"] == case["seed"])
+    isaac = [json.loads(line) for line in
+             (bud.isaac_dir(root) / "episodes.jsonl").read_text().splitlines() if line]
+    isaac = next(r for r in isaac if r["model"] == key
+                 and r["condition"] == case["condition"] and r["seed"] == case["seed"])
+
+    class Recorder:                     # evaluator-side only: the policy never sees these rows
+        def __init__(self, backend):
+            self.backend, self.rows = backend, []
+
+        def _snap(self, t):
+            f = self.backend.flight
+            self.rows.append({"t": float(t), "p": f.position.copy(), "v": f.velocity.copy(),
+                              "pad": f.pad.copy(), "pad_v": f.pad_velocity.copy()})
+
+        def reset(self, seed):
+            out = self.backend.reset(seed)
+            self._snap(0.0)
+            return out
+
+        def step(self, action, latent=None):
+            step = self.backend.step(action, latent=latent)
+            self._snap(step.elapsed_s)
+            return step
+
+    backend = make_local_backend(config, difficulty=1.0, randomization=None,
+                                 scenario=cell["split"], factors=factors, dropout=dropout)
+    recorder = Recorder(backend)
+    try:
+        episode = pilot.fly_policy(recorder, pilot._model(config, arm, state), config,
+                                   seed=case["seed"], deterministic=True,
+                                   generator=torch.Generator().manual_seed(
+                                       case["seed"] + bud.ACTION_OFFSET),
+                                   record=True, trace=True)
+    finally:
+        backend.close()
+    if (episode["status"], episode["decisions"]) != (reference["status"], reference["decisions"]):
+        raise SystemExit(f"replay {episode['status']}/{episode['decisions']} does not reproduce "
+                         f"the local reference {reference['status']}/{reference['decisions']}")
+    rows = recorder.rows
+    for row, traced in zip(rows[1:], episode["trace"]):
+        if not np.allclose(row["p"] - row["pad"], traced["truth_r"], atol=1e-9):
+            raise SystemExit("recorded world state disagrees with the evaluator's truth")
+    age = np.r_[0.0, [t["estimate"]["vision_age_s"] for t in episode["trace"]]]
+    return rows, age, episode, isaac
 
 
 @_plot
-def speed():
-    """learning-speed/1 (status doc 21): per-seed first update at difficulty 1.0 and the
-    registered ratio intervals, read from the verdict file speed-report wrote."""
-    from scipy import stats
-    data = json.loads(SPEED_RESULT.read_text())
-    if not data.get("complete"):
-        raise SystemExit("learning-speed/1 is not complete; run --stage speed-report first")
-    proposed = data["proposed_arm"]
-    cap = data["cap"]
-    arms = {key: data["arms"][proposed if key == "orl" else key] for key, _ in SPEED_ARMS}
-    seeds = sorted(int(s) for s in arms["orl"]["first_full_update"])
-    T = {key: [arms[key]["first_full_update"][str(s)] for s in seeds] for key in arms}
+def trajectory():
+    """One closed-loop ORL landing (TRAJECTORY_CASE) replayed on the calibrated local plant:
+    (a) drone and pad horizontal paths, (b) relative position and velocity (own minus pad),
+    (c) height above the pad and vertical relative velocity.  Simulator truth, plotted only."""
+    rows, age, episode, isaac = _replay_case(TRAJECTORY_CASE)
+    t = np.array([r["t"] for r in rows])
+    p = np.array([r["p"] for r in rows])
+    pad = np.array([r["pad"] for r in rows])
+    rel = p - pad
+    vel = np.array([r["v"] - r["pad_v"] for r in rows])
+    blind = age >= VIEW_LOST_S
+    xy_style = (("x", PROPOSED, "-"), ("y", INK, (0, (3.0, 1.6))))
+
     fig = plt.figure(figsize=(PLOT_W, 2.95), layout="constrained")
-    fig.get_layout_engine().set(w_pad=0.02, h_pad=0.02, wspace=0.06)
-    gs = fig.add_gridspec(1, 2, width_ratios=[1.0, 1.0])
-    # (a) per-seed first update, paired lines
-    ax = fig.add_subplot(gs[0])
-    jitter = np.linspace(-0.14, 0.14, len(seeds))
-    for k, s in enumerate(seeds):
-        ys = [cap if T[key][k] is None else T[key][k] for key, _ in SPEED_ARMS]
-        ax.plot([i + jitter[k] for i in range(3)], ys, color="#CFCFCF", lw=0.6, zorder=1)
-    for i, (key, _) in enumerate(SPEED_ARMS):
-        color = PROPOSED if key == "orl" else OTHER
-        for k, value in enumerate(T[key]):
-            hit = value is not None
-            ax.plot(i + jitter[k], value if hit else cap, "o", ms=4.2, zorder=3,
-                    mfc=color if hit else "white", mec="white" if hit else color,
-                    mew=0.6 if hit else 1.0)
-        median = arms[key]["median_update_censored_at_cap"]
-        ax.plot([i - 0.25, i + 0.25], [median, median], color=INK, lw=1.2, zorder=4)
-        ax.text(i + 0.28, median, f"{median:g}", va="center", fontsize=P_BODY, color=INK)
-    censored = [s for k, s in enumerate(seeds)
-                if any(T[key][k] is None for key, _ in SPEED_ARMS)]
-    ax.text(1.5, cap * 0.80, f"seed {', '.join(map(str, censored))}: never left the easiest\n"
-            f"stage, counted as the cap ({cap})", ha="center", va="top", fontsize=P_NOTE,
-            color=MUTED, linespacing=1.15, zorder=5, bbox=dict(fc="white", ec="none", pad=0.3))
-    ax.set_yscale("log")
-    ax.set_ylim(48, 760)
-    ticks = [50, 75, 100, 150, 200, 300, 600]
-    ax.set_yticks(ticks)
-    ax.set_yticklabels([str(t) for t in ticks])
-    ax.minorticks_off()
-    ax.set_xlim(-0.4, 2.6)
-    ax.set_xticks(range(3))
-    ax.set_xticklabels([name for _, name in SPEED_ARMS], color=INK)
-    ax.set_ylabel("first update at difficulty 1.0", color=INK)
-    ax.set_title("(a) Updates to reach difficulty 1.0 (bar: median)", loc="left", color=INK)
-    style_axes(ax)
-    # (b) registered ratio intervals (filled) and the exploratory seed-45 sensitivity (hollow)
-    ax = fig.add_subplot(gs[1])
-    level = data["comparisons"][SPEED_ARMS[1][0]]["log_ratio"]["confidence"]
-    rows = []
-    for key, name in SPEED_ARMS[1:]:
-        c = data["comparisons"][key]
-        per = c["log_ratio"]["per_seed"]
-        keep = [d for s, d in zip(seeds, per) if s not in censored]
-        n = len(keep)
-        m = float(np.mean(keep))
-        h = stats.t.ppf(1 - (1 - level) / 2, n - 1) * float(np.std(keep, ddof=1)) / math.sqrt(n)
-        rows.append((name, c, (math.exp(m), math.exp(m - h), math.exp(m + h)), n))
-    for j, (name, c, (r, lo, hi), n) in enumerate(rows):
-        y = len(rows) - 1 - j
-        ax.plot(c["ratio_interval"], [y + 0.08] * 2, color=PROPOSED, lw=1.6, solid_capstyle="round")
-        ax.plot(c["ratio"], y + 0.08, "o", ms=5.5, mfc=PROPOSED, mec="white", mew=0.8, zorder=3)
-        ax.text(1.1, y + 0.08, f"×{c['ratio']:.2f} [{c['ratio_interval'][0]:.2f}, "
-                f"{c['ratio_interval'][1]:.2f}]", va="center", fontsize=P_BODY, color=INK)
-        ax.plot([lo, hi], [y - 0.24] * 2, color=PROPOSED, lw=0.9)
-        ax.plot(r, y - 0.24, "o", ms=4.5, mfc="white", mec=PROPOSED, mew=1.0, zorder=3)
-        ax.text(1.1, y - 0.24, f"×{r:.2f} [{lo:.2f}, {hi:.2f}]", va="center", fontsize=P_NOTE,
-                color=MUTED)
-        ax.text(0.23, y + 0.42, f"ORL / {name}", fontsize=P_BODY, color=INK, va="center", zorder=4,
-                bbox=dict(fc="white", ec="none", pad=0.4))
-    ax.axvline(1.0, color=INK, lw=0.7, ls=(0, (3, 2)), zorder=1)
-    ax.set_xscale("log")
-    ax.set_xlim(0.22, 2.6)
-    xt = [0.25, 0.33, 0.5, 0.67, 1.0, 1.5]
-    ax.set_xticks(xt)
-    ax.set_xticklabels([f"{t:g}" for t in xt])
-    ax.minorticks_off()
-    ax.set_ylim(-1.45, len(rows) - 0.35)
-    ax.set_yticks([])
-    ax.set_xlabel(f"T(ORL) / T(comparison), {level * 100:g} % paired-t interval", color=INK)
-    ax.set_title("(b) Registered comparison", loc="left", color=INK)
-    style_axes(ax)
-    ax.yaxis.grid(False)
-    ax.spines["left"].set_visible(False)
-    ax.legend(handles=[
-        plt.Line2D([], [], color=PROPOSED, lw=1.6, marker="o", ms=5, mfc=PROPOSED, mec="white",
-                   label=f"registered rule, {len(seeds)} seeds (cap counted)"),
-        plt.Line2D([], [], color=PROPOSED, lw=0.9, marker="o", ms=4.5, mfc="white", mec=PROPOSED,
-                   label=f"exploratory, without seed {', '.join(map(str, censored))}")],
-        loc="lower left", bbox_to_anchor=(0.0, 0.0), ncol=1, frameon=True, fontsize=P_NOTE,
-        borderaxespad=0.2, handlelength=2.2, facecolor="white", edgecolor="none", framealpha=1.0)
-    save(fig, "learning_speed", min_pt=PLOT_MIN_PT)
+    fig.get_layout_engine().set(w_pad=0.02, h_pad=0.02, wspace=0.05, hspace=0.04)
+    gs = fig.add_gridspec(2, 3, width_ratios=[1.3, 1.0, 1.0])
 
-
-BUDGET_RESULT = RESULTS / "spatial_current_semantics_v1" / "equal_budget" / "equal_budget.json"
-ISAAC_BUDGET_RESULT = (RESULTS / "spatial_current_semantics_v1" / "isaac_equal_budget"
-                       / "isaac_equal_budget.json")
-BUDGET_ARMS = (("orl", "ORL (proposed)", PROPOSED, "o"), ("untyped_gnn_ppo", "Untyped GNN", "#4D4D4D", "s"),
-               ("raw_ppo", "PPO", "#909090", "^"))
-ISAAC_CONDITIONS = (("composition_id", "composition\nID"), ("composition_ood", "composition\nOOD"),
-                    ("combined_id", "combined\nID"))
-
-
-@_plot
-def equal_budget():
-    """equal-budget/1 (status doc 24): landing success at the same number of PPO updates, read
-    from the verdict file budget-report wrote.  The Isaac flight is ``isaac_budget``."""
-    data = json.loads(BUDGET_RESULT.read_text())
-    if not data.get("complete"):
-        raise SystemExit("equal-budget/1 is not complete; run --stage budget-report first")
-    proposed = data["proposed_arm"]
-    budgets = [str(b) for b in data["budgets"]]
-    arm_of = {key: proposed if key == "orl" else key for key, *_ in BUDGET_ARMS}
-    fig = plt.figure(figsize=(PLOT_W, 2.95), layout="constrained")
-    fig.get_layout_engine().set(w_pad=0.02, h_pad=0.02, wspace=0.06)
-    gs = fig.add_gridspec(1, 2, width_ratios=[1.0, 1.0])
-    # (a) ten-cell success after exactly B updates, every training seed
-    ax = fig.add_subplot(gs[0])
-    offsets = np.linspace(-0.22, 0.22, len(BUDGET_ARMS))
-    for (key, name, color, marker), off in zip(BUDGET_ARMS, offsets):
-        arm = data["arms"][arm_of[key]]["budgets"]
-        means = []
-        for i, b in enumerate(budgets):
-            seeds = arm[b]["per_seed_success"]
-            ys = [100 * v for v in seeds.values()]
-            ax.plot(np.full(len(ys), i + off) + np.linspace(-0.04, 0.04, len(ys)), ys, marker,
-                    ms=2.8, color=color, alpha=1.0, mec="none", zorder=2)
-            means.append(100 * arm[b]["mean_success"])
-        ax.plot(np.arange(len(budgets)) + off, means, "-", color=color, lw=1.0, zorder=3)
-        ax.plot(np.arange(len(budgets)) + off, means, marker, ms=5.5, color=color, mec="white",
-                mew=0.6, zorder=4, label=name)
-    ax.set_xticks(range(len(budgets)))
-    ax.set_xticklabels(budgets)
-    ax.set_xlim(-0.5, len(budgets) - 0.5)
-    ax.set_ylim(-4, 100)            # room for the seeds that never left difficulty 0
-    ax.set_yticks(range(0, 101, 20))
-    ax.set_xlabel("PPO updates (budget)", color=INK)
-    ax.set_ylabel("ten-cell landing success [%]", color=INK)
-    ax.set_title("(a) Success at the same budget", loc="left", color=INK)
-    ax.legend(loc="lower right", bbox_to_anchor=(1.0, 0.09), frameon=True, facecolor="white",
-              edgecolor="none", framealpha=1.0, handlelength=1.2, borderaxespad=0.2)
-    style_axes(ax)
-    # (b) ORL minus each comparison, registered fixed sequence
-    ax = fig.add_subplot(gs[1])
-    level = None
-    for j, (key, name, color, marker) in enumerate(BUDGET_ARMS[1:]):
-        comp = data["comparisons"][key]
-        level = comp["confidence"]
-        for i, b in enumerate(budgets):
-            row = comp["by_budget"][b]
-            d = row["difference"]
-            x = i + (-0.13 if j == 0 else 0.13)
-            mean, lo, hi = 100 * d["mean"], 100 * d["low"], 100 * d["high"]
-            filled = row["tested"]
-            ax.plot([x, x], [lo, hi], color=color, lw=1.4 if filled else 0.9,
-                    ls="-" if filled else (0, (2, 1.5)), zorder=2)
-            ax.plot(x, mean, marker, ms=5.5, mfc=color if filled else "white", mec=color,
-                    mew=1.0, zorder=3)
-    ax.axhline(0.0, color=INK, lw=0.7, ls=(0, (3, 2)), zorder=1)
-    ax.set_xticks(range(len(budgets)))
-    ax.set_xticklabels(budgets)
-    ax.set_xlim(-0.5, len(budgets) - 0.5)
-    ax.set_xlabel("PPO updates (budget)", color=INK)
-    ax.set_ylabel("ORL minus comparison [pp]", color=INK)
-    ax.set_title(f"(b) ORL − comparison, {level * 100:g} % CI", loc="left", color=INK)
-    handles = [plt.Line2D([], [], color=c, marker=m, ls="-", lw=1.2, ms=5, mfc=c, mec=c,
-                          label=f"vs {n}") for _, n, c, m in BUDGET_ARMS[1:]]
-    handles.append(plt.Line2D([], [], color=MUTED, marker="o", ls=(0, (2, 1.5)), lw=0.9, ms=5,
-                              mfc="white", mec=MUTED, label="not tested (sequence stopped)"))
-    ax.legend(handles=handles, loc="best", frameon=True, facecolor="white", edgecolor="none",
-              framealpha=1.0, handlelength=1.6, borderaxespad=0.2)
-    style_axes(ax)
-    save(fig, "equal_budget", min_pt=PLOT_MIN_PT)
-
-
-TITLE_PAD = 2.2 * P_NOTE      # panel title above a one-row legend that sits on the axes
-
-
-def _isaac_inputs():
-    """The isaac-equal-budget/1 verdict file and its paired local reference (identical cases)."""
-    if not ISAAC_BUDGET_RESULT.exists():
-        raise SystemExit("isaac-equal-budget/1 has no verdict file yet")
-    isaac = json.loads(ISAAC_BUDGET_RESULT.read_text())
-    if not isaac.get("protocol_complete"):
-        raise SystemExit("isaac-equal-budget/1 is not complete")
-    path = ISAAC_BUDGET_RESULT.parent / "local_reference.jsonl"
-    local = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
-    return isaac, local
-
-
-@_plot
-def isaac_budget():
-    """isaac-equal-budget/1 (status doc 24.6): the budget-600 models of equal-budget/1 flown on
-    Isaac Sim + PX4 SITL, every model on the same 15 cases, beside the identical cases on the
-    local plant (local_reference.jsonl, reported and never decisive)."""
-    isaac, local = _isaac_inputs()
-    proposed = json.loads(BUDGET_RESULT.read_text())["proposed_arm"]
-    arm_of = {key: proposed if key == "orl" else key for key, *_ in BUDGET_ARMS}
-
-    def local_rate(model, condition=None):
-        rows = [r for r in local if r["model"] == model and r.get("status") is not None
-                and (condition is None or r["condition"] == condition)]
-        return sum(r["status"] == "SUCCESS" for r in rows) / len(rows) if rows else None
-
-    groups = [*ISAAC_CONDITIONS, (None, "all\ncases")]
-    fig = plt.figure(figsize=(PLOT_W, 2.95), layout="constrained")
-    fig.get_layout_engine().set(w_pad=0.02, h_pad=0.02, wspace=0.06)
-    gs = fig.add_gridspec(1, 2, width_ratios=[1.25, 1.0])
-    # (a) success per condition: models (small), policy mean on Isaac (large), local mean (bar)
-    ax = fig.add_subplot(gs[0])
-    offsets = np.linspace(-0.25, 0.25, len(BUDGET_ARMS))
-    for (key, name, color, marker), off in zip(BUDGET_ARMS, offsets):
-        arm = arm_of[key]
-        models = sorted(k for k in isaac["per_model"] if k.split("/", 1)[1] == arm)
-        for g, (condition, _) in enumerate(groups):
-            if condition is None:
-                ys = [isaac["per_model"][k]["success"] for k in models]
-                mean = isaac["arms"][arm]["success"]
-            else:
-                ys = [isaac["per_model"][k]["by_condition"][condition] for k in models]
-                mean = isaac["arms"][arm]["by_condition"][condition]
-            ys = [100 * y for y in ys if y is not None]
-            if mean is None:
-                continue
-            ax.plot(np.full(len(ys), g + off) + np.linspace(-0.05, 0.05, len(ys)), ys, marker,
-                    ms=2.8, color=color, mec="none", alpha=0.75, zorder=2)
-            ax.plot(g + off, 100 * mean, marker, ms=6.0, color=color, mec="white", mew=0.7,
-                    zorder=4, label=name if g == 0 else None)
-            ref = [local_rate(k, condition) for k in models]
-            ref = [r for r in ref if r is not None]
-            if ref:
-                ax.plot([g + off - 0.09, g + off + 0.09], [100 * float(np.mean(ref))] * 2,
-                        color=INK, lw=1.3, zorder=5, solid_capstyle="butt")
-    ax.axvline(len(ISAAC_CONDITIONS) - 0.5, color=GRID, lw=0.9, zorder=1)
-    ax.set_xticks(range(len(groups)))
-    ax.set_xticklabels([label for _, label in groups])
-    ax.set_xlim(-0.5, len(groups) - 0.5)
-    ax.set_ylim(-4, 104)
-    ax.set_yticks(range(0, 101, 20))
-    ax.set_ylabel("landing success [%]", color=INK)
-    ax.set_title(f"(a) Isaac Sim + PX4, budget {isaac['plan']['budget']}", loc="left", color=INK,
-                 pad=TITLE_PAD)
+    # (a) horizontal paths in the world frame, origin = pad centre at handover
+    ax = fig.add_subplot(gs[:, 0])
+    ax.plot(pad[:, 0], pad[:, 1], color=MUTED, lw=1.2, ls=(0, (3.0, 1.6)), label="pad centre")
+    ax.plot(p[:, 0], p[:, 1], color=PROPOSED, lw=1.4, label="drone")
+    for k in range(0, len(t), 20):           # every 2 s: drone-pad pairs
+        ax.plot([pad[k, 0], p[k, 0]], [pad[k, 1], p[k, 1]], color="#BDBDBD", lw=0.6, zorder=1)
+        ax.plot(pad[k, 0], pad[k, 1], "o", ms=2.6, color=MUTED, mec="none", zorder=3)
+        ax.plot(p[k, 0], p[k, 1], "o", ms=2.6, color=PROPOSED, mec="none", zorder=3)
+    ax.add_patch(Circle(pad[-1, :2], 0.5, fill=False, ec=MUTED, lw=0.8, zorder=2))
+    ax.plot(p[-1, 0], p[-1, 1], "x", ms=5.5, mew=1.3, color=PROPOSED, zorder=4,
+            label="touchdown")
+    ax.annotate("handover", xy=(p[0, 0], p[0, 1]), xytext=(p[0, 0] - 0.2, p[0, 1] - 0.95),
+                fontsize=P_NOTE, color=INK, ha="center",
+                arrowprops=dict(arrowstyle="-", lw=0.6, color=MUTED))
+    ax.annotate("pad, r = 0.5 m", xy=(pad[-1, 0] + 0.36, pad[-1, 1] + 0.36),
+                xytext=(pad[-1, 0] + 0.9, pad[-1, 1] + 1.0), fontsize=P_NOTE, color=MUTED,
+                va="bottom", arrowprops=dict(arrowstyle="-", lw=0.6, color=MUTED))
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.set_xlabel("east [m]", color=INK)
+    ax.set_ylabel("north [m]", color=INK)
+    ax.set_title("(a) Horizontal paths", loc="left", color=INK)
     handles, _ = ax.get_legend_handles_labels()
-    handles.append(plt.Line2D([], [], color=INK, lw=1.3, label="local plant"))
-    ax.legend(handles=handles, loc="lower left", bbox_to_anchor=(0.0, 1.0), frameon=False, ncol=4,
-              handlelength=1.0, handletextpad=0.4, columnspacing=0.9, borderaxespad=0.15,
-              borderpad=0.0).set_in_layout(False)     # its room is the title pad
+    handles.append(plt.Line2D([], [], color="#BDBDBD", lw=0.6, marker="o", ms=2.6,
+                              mfc=MUTED, mec="none", label="pair every 2 s"))
+    ax.legend(handles=handles, loc="lower left", frameon=True, facecolor="white",
+              edgecolor="none", framealpha=1.0, handlelength=1.8, borderaxespad=0.2)
     style_axes(ax)
-    # (b) registered comparison (Isaac, filled) and the paired local record (hollow)
-    ax = fig.add_subplot(gs[1])
-    level, lows, highs = None, [], []
-    comparisons = BUDGET_ARMS[1:]
-    for j, (key, name, color, marker) in enumerate(comparisons):
-        comp = isaac["comparisons"][arm_of[key]]
-        y = len(comparisons) - 1 - j
-        for d, dy, filled in ((comp["difference"], 0.17, True),
-                              (comp.get("local_difference"), -0.17, False)):
-            if d is None:
-                continue
-            level = level or d["confidence"]
-            mean, lo, hi = 100 * d["mean"], 100 * d["low"], 100 * d["high"]
-            lows.append(lo)
-            highs.append(hi)
-            ax.plot([lo, hi], [y + dy] * 2, color=color, lw=1.6 if filled else 0.9,
-                    solid_capstyle="round", zorder=2)
-            ax.plot(mean, y + dy, marker, ms=6.0 if filled else 5.0, mfc=color if filled else "white",
-                    mec="white" if filled else color, mew=0.8 if filled else 1.0, zorder=3)
-            ax.text(hi + 1.5, y + dy, f"{mean:+.1f} [{lo:+.1f}, {hi:+.1f}]".replace("-", "−"),
-                    va="center",
-                    fontsize=P_BODY if filled else P_NOTE, color=INK if filled else MUTED)
-    ax.axvline(0.0, color=INK, lw=0.7, ls=(0, (3, 2)), zorder=1)
-    span = max(highs) - min(lows)
-    ax.set_xlim(min(lows) - 0.08 * span, max(highs) + 0.62 * span)
-    ax.set_ylim(-0.6, len(comparisons) - 0.4)
-    ax.set_yticks(range(len(comparisons)))
-    ax.set_yticklabels([f"vs {name}" for _, name, *_ in reversed(comparisons)])
-    ax.set_xlabel(f"ORL minus comparison, success [pp]", color=INK)
-    ax.set_title(f"(b) ORL − comparison, {level * 100:g} % CI", loc="left", color=INK,
-                 pad=TITLE_PAD)
-    style_axes(ax)
-    ax.yaxis.grid(False)
     ax.xaxis.grid(True, color=GRID, lw=0.5)
-    ax.tick_params(axis="y", length=0)
-    ax.spines["left"].set_visible(False)
-    ax.legend(handles=[
-        plt.Line2D([], [], color=MUTED, lw=1.6, marker="o", ms=5, mfc=MUTED, mec="white",
-                   label="Isaac, registered"),
-        plt.Line2D([], [], color=MUTED, lw=0.9, marker="o", ms=4.5, mfc="white", mec=MUTED,
-                   label="local plant")],
-        loc="lower left", bbox_to_anchor=(0.0, 1.0), frameon=False, ncol=2, handlelength=2.0,
-        handletextpad=0.4, columnspacing=0.9, borderaxespad=0.15, borderpad=0.0
-    ).set_in_layout(False)
-    save(fig, "isaac_equal_budget", min_pt=PLOT_MIN_PT)
+
+    def shade(a):
+        edges = np.flatnonzero(np.diff(np.r_[0, blind.astype(int), 0]))
+        for start, stop in zip(edges[::2], edges[1::2]):
+            a.axvspan(t[start], t[min(stop, len(t) - 1)], color="#EDEDED", lw=0, zorder=0)
+        a.axhline(0.0, color="#8C8C8C", lw=0.6, zorder=1)
+        a.set_xlim(0.0, t[-1])
+
+    # (b) relative position and velocity, horizontal axes (own minus pad)
+    top = fig.add_subplot(gs[0, 1])
+    bottom = fig.add_subplot(gs[1, 1], sharex=top)
+    for i, (name, color, ls) in enumerate(xy_style):
+        top.plot(t, rel[:, i], color=color, ls=ls, lw=1.1, label=name)
+        bottom.plot(t, vel[:, i], color=color, ls=ls, lw=1.1, label=name)
+    for a in (top, bottom):
+        shade(a)
+        style_axes(a)
+    top.set_ylabel("rel. position [m]", color=INK)
+    bottom.set_ylabel("rel. velocity [m/s]", color=INK)
+    bottom.set_xlabel("time since handover [s]", color=INK)
+    top.tick_params(labelbottom=False)
+    top.set_title("(b) Relative state, x and y", loc="left", color=INK)
+    top.legend(loc="upper right", ncol=2, frameon=True, facecolor="white", edgecolor="none",
+               framealpha=1.0, handlelength=1.8, borderaxespad=0.2, columnspacing=0.8)
+
+    # (c) height above the pad and vertical relative velocity
+    contact_h = float(load_contact_height())
+    top = fig.add_subplot(gs[0, 2], sharex=bottom)
+    bottom2 = fig.add_subplot(gs[1, 2], sharex=bottom)
+    top.plot(t, rel[:, 2], color=PROPOSED, lw=1.2)
+    top.axhline(contact_h, color=INK, lw=0.7, ls=(0, (3, 2)))
+    top.text(t[-1] * 0.03, contact_h + 0.12, f"contact height {contact_h:.3f} m",
+             fontsize=P_NOTE, color=MUTED, va="bottom")
+    bottom2.plot(t, vel[:, 2], color=PROPOSED, lw=1.2)
+    bottom2.axhline(-0.30, color=INK, lw=0.7, ls=(0, (3, 2)))
+    for a in (top, bottom2):
+        shade(a)
+        style_axes(a)
+    top.set_ylim(bottom=-0.15)
+    bottom2.set_ylim(min(-0.55, float(vel[:, 2].min()) - 0.05), max(0.15, float(vel[:, 2].max()) + 0.05))
+    top.set_ylabel("height above pad [m]", color=INK)
+    bottom2.set_ylabel("vertical velocity [m/s]", color=INK)
+    bottom2.set_xlabel("time since handover [s]", color=INK)
+    top.tick_params(labelbottom=False)
+    top.set_title("(c) Vertical state", loc="left", color=INK)
+    handles = [plt.Line2D([], [], color=INK, lw=0.7, ls=(0, (3, 2)),
+                          label="limit at contact, −0.30 m/s")]
+    if blind.any():
+        handles.append(Rectangle((0, 0), 1, 1, fc="#EDEDED", ec="none",
+                                 label=f"pad unseen ≥ {VIEW_LOST_S:g} s"))
+    bottom2.legend(handles=handles, loc="upper right", frameon=False, handlelength=1.6,
+                   borderaxespad=0.2, labelspacing=0.3)
+    save(fig, "closed_loop_trajectory", min_pt=PLOT_MIN_PT)
+    blind_s = float(np.sum(np.diff(t)[blind[1:]]))
+    s = episode["scenario"]
+    print(f"closed_loop_trajectory: ORL ({ORL_VERSION}) training seed "
+          f"{TRAJECTORY_CASE['training_seed']}, budget 600, {TRAJECTORY_CASE['condition']} "
+          f"(bearing bin {s['bearing_bin']}, heading bin {s['heading_bin']}), environment seed "
+          f"{TRAJECTORY_CASE['seed']}; local replay {episode['status']} after "
+          f"{episode['elapsed_s']:.2f} s ({episode['decisions']} decisions), max tilt "
+          f"{episode['max_tilt_deg']:.1f} deg, touchdown v_z "
+          f"{episode['terminal_truth']['relative_velocity_own_minus_pad_m_s'][2]:+.3f} m/s; "
+          f"Isaac flight of the same case {isaac['status']} after {isaac['elapsed_s']:.2f} s "
+          f"({isaac['decisions']} decisions); pad unseen >= {VIEW_LOST_S:g} s for "
+          f"{blind_s:.2f} s")
 
 
-FIGURES = {"overall": overall, "architecture": architecture, "graph": graph, "field": field,
-           "speed": speed, "budget": equal_budget, "isaac": isaac_budget}
+def load_contact_height():
+    """The local plant's contact height (config local_plant.contact_height_m)."""
+    from ontology_rgat.current_semantics.contracts import load_config
+    return load_config(CONFIG).local_plant.contact_height_m
+
+
+FIGURES = {"architecture": architecture, "overall": overall, "field": field,
+           "trajectory": trajectory}
 
 
 def main():
@@ -1350,7 +1085,7 @@ def main():
     parser.add_argument("what", choices=["all", *FIGURES])
     parser.add_argument("--formats", default=",".join(FORMATS),
                         help="comma list of png, svg, tif, eps, pdf (default png,svg)")
-    parser.add_argument("--out", type=Path, default=OUT, help="output folder (default docs/figures)")
+    parser.add_argument("--out", type=Path, default=OUT, help="output folder (default results/figures)")
     args = parser.parse_args()
     ARGS_FORMATS = tuple(f.strip() for f in args.formats.split(",") if f.strip())
     unknown = set(ARGS_FORMATS) - {"png", "svg", "tif", "eps", "pdf"}
@@ -1362,7 +1097,7 @@ def main():
             try:
                 f()
             except (FileNotFoundError, SystemExit) as exc:   # a result not produced yet
-                if name not in ("speed", "budget", "isaac"):
+                if name != "trajectory":
                     raise
                 print(f"skipped {name}: {exc}")
     else:

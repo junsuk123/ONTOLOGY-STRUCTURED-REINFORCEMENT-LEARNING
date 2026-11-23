@@ -22,3 +22,9 @@ GEMINI.md
 .cursorrules
 .aider*
 .github/copilot-instructions.md
+
+# Analysis plan files of the paper's three comparisons: kept by the authors, not in the public
+# repository (paper, Data Availability).  The stages read them from these paths.
+Ontology_RGAT_UAV_RL_ISAAC_PX4/config/current_semantics/learning_speed_v1.yaml
+Ontology_RGAT_UAV_RL_ISAAC_PX4/config/current_semantics/equal_budget_v1.yaml
+Ontology_RGAT_UAV_RL_ISAAC_PX4/config/current_semantics/isaac_equal_budget_v1.yaml

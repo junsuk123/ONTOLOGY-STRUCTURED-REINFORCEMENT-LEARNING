@@ -2,23 +2,22 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""Experiment configuration.
+"""Base configuration of the Isaac/PX4 bridge and the owned stack.
 
-Port of the retired ``config/defaultConfig.m`` plus ``defaultExternalConfig.m``.
-The two files were split because the original workspace was read-only; here
-there is one function and the external terms are simply part of it.
+``default_config`` is what ``bridge.PX4Bridge``, ``stack``/``live_stack`` and
+the spatial Isaac backend read: the control period (``sim``), the action
+scaling (``rl``), the gateway/entry settings (``external``) and the paths.
+The ORL study's own registered settings are in
+``config/current_semantics/*.yaml``. The semantic, reward, ontology, R-GAT,
+PPO, evaluation and visualization sections belong to an earlier
+reward-shaping experiment and are not read by the ORL route.
 
-Everything the in-process MATLAB rigid-body simulator owned is gone: rotor and
-motor models, the analytic wind field, the panel aerodynamics and the synthetic
-sensor noise. Isaac and PX4 own all four, so keeping a second set of numbers
-here would only invite them to disagree. What survives is what the *learning*
-side needs: the semantic feature scalings, the landing criteria, the ontology
-schema, and the R-GAT/PPO hyperparameters.
-
-``config/system.yaml`` remains the authority for anything the simulator or the
-gateway acts on. The two overlap in exactly three places -- the collective
-mapping, the relative-speed success criterion and the protocol -- and each
-overlap is checked at run time rather than trusted (see ``bridge.PX4Bridge``).
+Isaac and PX4 own the vehicle dynamics, wind and sensor noise, so no second
+set of those numbers is kept here. ``config/system.yaml`` remains the
+authority for anything the simulator or the gateway acts on. The two overlap
+in exactly three places -- the collective mapping, the relative-speed success
+criterion and the protocol -- and each overlap is checked at run time rather
+than trusted (see ``bridge.PX4Bridge``).
 """
 from __future__ import annotations
 
@@ -35,9 +34,8 @@ WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
 class Config(dict):
     """A nested dict with attribute access, so ``cfg.rgat.lr`` reads naturally.
 
-    MATLAB structs are value types: ``c = cfg; c.external.padScale = s`` left
-    the caller's ``cfg`` untouched. Python dicts are not, so the sweeps use
-    :meth:`derive` where the MATLAB code relied on copy-on-assign.
+    Dicts are shared by reference, so a variant is made with :meth:`derive` (a
+    deep copy) rather than by mutating the caller's ``cfg``.
     """
 
     def __getattr__(self, name: str) -> Any:
@@ -117,8 +115,8 @@ def default_config(mode: str = "quick", target: str = "sitl") -> Config:
     }
     cfg.sim.max_steps = int(round(cfg.sim.max_time / cfg.sim.dt))
 
-    # Only the two terms the semantic features price thrust with survive from
-    # the retired airframe model; Isaac flies the vehicle.
+    # Only the two terms the semantic features price thrust with; Isaac flies
+    # the vehicle.
     cfg.drone = {"mass": 1.477, "max_total_thrust": 30.0}
 
     # ------------------------------------------------- semantic feature scales
@@ -207,10 +205,7 @@ def default_config(mode: str = "quick", target: str = "sitl") -> Config:
 
     # -------------------------------------------------------- ontology schema
     # PadMotion (11), BatteryReserve (12) and GnssIntegrity (13) are the three
-    # nodes the external environment introduces, so SafeLanding is node 14. A
-    # model trained against a shorter schema is not loadable: the dimension
-    # check in semantic.build_ontology_graph refuses it rather than quietly
-    # attending over the wrong nodes.
+    # nodes the external environment introduces, so SafeLanding is node 14.
     cfg.ontology = {
         "node_names": [
             "PositionError", "VerticalSpeed", "TiltAngle", "AngularRate",
@@ -225,12 +220,10 @@ def default_config(mode: str = "quick", target: str = "sitl") -> Config:
     cfg.ontology.in_dim = 4 + cfg.ontology.n_nodes
 
     # ------------------------------------------------------------------ R-GAT
-    # The layer follows Busbridge et al. 2019 ("Relational Graph Attention
-    # Networks", https://openreview.net/forum?id=Bklzkh0qFm) as implemented by
-    # babylonhealth/rgat. The defaults below are the exact configuration the
-    # retired MATLAB layer implemented, so numbers stay comparable across the
-    # port; the remaining knobs are the parts of that paper the MATLAB code
-    # never had. See python/ontology_rgat/rgat/layers.py.
+    # Options of the relational graph attention layer of Busbridge et al. 2019
+    # ("Relational Graph Attention Networks",
+    # https://openreview.net/forum?id=Bklzkh0qFm), as implemented by
+    # babylonhealth/rgat.
     cfg.rgat = {
         "hidden_dim": 24,
         "rel_dim": 6,                     # relation-embedding width in the logits
@@ -255,7 +248,7 @@ def default_config(mode: str = "quick", target: str = "sitl") -> Config:
         "feature_dropout": 0.0,
         "support_dropout": 0.0,
         "residual": True,                 # second layer is H2 = tanh(layer(H1) + H1)
-        "softmax_floor": 1e-9,            # the MATLAB layer's denominator floor
+        "softmax_floor": 1e-9,            # softmax denominator floor
         "stable_softmax": False,          # True subtracts the per-node max first
     }
 
@@ -279,15 +272,13 @@ def default_config(mode: str = "quick", target: str = "sitl") -> Config:
     }
 
     # ----------------------------------------------------------------- device
-    # Measured, not assumed: python/ontology_rgat/rgat/benchmark.py re-measures
-    # the crossover on the active machine. The graph has 14 nodes and a 24-wide
-    # hidden layer, so a small batch is kernel-launch bound rather than FLOP
-    # bound and the GPU can still lose. 'auto' therefore declines below
-    # ``min_batch_for_gpu`` instead of quietly rebatching -- raising the batch
-    # size changes how many Adam steps the potential sees, which is a
-    # hyperparameter decision and not a free speedup.
+    # The graph has 14 nodes and a 24-wide hidden layer, so a small batch is
+    # kernel-launch bound rather than FLOP bound and the GPU can still lose.
+    # 'auto' therefore declines below ``min_batch_for_gpu`` instead of quietly
+    # rebatching -- raising the batch size changes how many Adam steps the
+    # potential sees, which is a hyperparameter decision and not a free speedup.
     #
-    # On this RTX 4060 laptop, per forward+backward pass (40 repetitions):
+    # On an RTX 4060 laptop GPU, per forward+backward pass (40 repetitions):
     #
     #     batch      CPU        GPU      speedup
     #        32     4.3 ms     4.8 ms      0.9x
@@ -297,8 +288,6 @@ def default_config(mode: str = "quick", target: str = "sitl") -> Config:
     #      4096   193.9 ms     9.5 ms     20.4x
     #
     # Batch 32 is a tie that varies between runs, 64 is the first clear gain.
-    # The retired MATLAB layer needed batch 1024 before the GPU paid for
-    # itself, because every relation was a separate traced dlarray operation.
     cfg.device = {
         "rgat": "auto",                   # auto | cuda | cpu
         "min_batch_for_gpu": 64,
@@ -337,9 +326,8 @@ def default_config(mode: str = "quick", target: str = "sitl") -> Config:
     }
 
     # ------------------------------------------------------- visualization
-    # Every panel the retired MATLAB monitors drew now has a Python owner:
-    # RViz 2 for the 3D/real-time view, the web dashboard for unattended
-    # progress, matplotlib for the publication figures. See viz/.
+    # Live-visualization switches of the earlier experiment; nothing in this
+    # repository reads them.
     cfg.viz = {
         "training": True,                 # live training telemetry at all
         "realtime": True,                 # per-step episode telemetry
@@ -363,9 +351,6 @@ def default_config(mode: str = "quick", target: str = "sitl") -> Config:
             "port": 8770,
             "history": 4000,              # points retained per live series
         },
-        # The dashboard's 3D view of the ontology with the R-GAT's attention
-        # on its edges. One snapshot is ~40 edges, so the cost is the attention
-        # read-out itself, which is why it is throttled rather than per step.
         "graph3d": {
             "enabled": True,
             "every": 5,                   # control steps/epochs between snapshots
@@ -487,18 +472,14 @@ def default_config(mode: str = "quick", target: str = "sitl") -> Config:
         # flies at. MPC_XY_VEL_MAX is 2.0 m/s here, but the deck is driving
         # away for the whole trip: pad.benchmark_speed_scale maps the paper's
         # fastest scenario onto the carrier's 1.0 m/s ceiling, so a stern
-        # chase nets a fraction of the airframe's own limit. Assuming the
-        # cruise speed instead cost the 2026-09-18 four-pair run twelve hours.
-        # All 23 of that run's entry failures began 21-52 m out; the gap
-        # closed at a measured 0.31 m/s; and 20 of the 23 expired while still
-        # travelling, with 85-98% of the distance already covered. Every one
-        # was reported as an infrastructure fault and rebuilt the shared
-        # simulator, taking the other pair's episode with it -- for a budget
-        # short by a factor of four against a vehicle that was flying the
-        # trip correctly.
+        # chase nets a fraction of the airframe's own limit. On a four-pair
+        # stage, entry gaps of 21-52 m closed at a measured 0.31 m/s; a budget
+        # priced at the cruise speed is short by a factor of four and expires
+        # vehicles that are still flying the trip correctly (85-98 % of the
+        # distance covered), each then reported as an infrastructure fault.
         "entry_travel_speed": 0.35,       # m/s of measured closing speed
-        # 39 m was the longest transit that run attempted, which is 110 s at
-        # the speed above: the cap has to clear it rather than truncate it.
+        # The longest measured transit, 39 m, takes 110 s at the speed above:
+        # the cap has to clear it rather than truncate it.
         "entry_travel_budget_max": 180.0,  # s of simulated PX4 time, at most
         # A gateway-classified recoverable SITL link failsafe (OFFBOARD
         # heartbeat loss and its benign status-clear race) clears on its own

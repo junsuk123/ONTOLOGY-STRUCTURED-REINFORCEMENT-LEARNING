@@ -4,8 +4,8 @@
 
 """Current-observation 3D landing path (``spatial_current_semantics_v1``).
 
-Separate from ``minimal/``, ``spatial/``, ``landing/`` and ``direct_policy/``:
-it shares no checkpoint, hash or eligibility with them.  The identifiers are
+Separate from ``spatial/``, ``landing/`` and ``direct_policy/``: it shares no
+checkpoint, hash or eligibility with them.  The identifiers are
 defined here, not in ``contracts``, so importing the package stays free of
 torch -- every ``direct_policy`` submodule import runs that package's
 ``__init__``, which loads its torch models.

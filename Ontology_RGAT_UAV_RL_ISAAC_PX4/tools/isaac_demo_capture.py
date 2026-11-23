@@ -11,10 +11,12 @@ camera's annotated ArUco topic and RViz2 following the vehicle (TF from
 ``timeline.json`` with the wall time of every reset, handover, decision and end.
 
 ``media`` cuts that recording into the README media: a still, a GIF of the first flight
-and an MP4 of every flight, both at 4x with the flight phase written on each frame.
+and an MP4 of every flight, both at 4x with the flight phase written on each frame.  It
+crops only the three windows; the raw full-screen ``screen.mp4`` can show other windows and
+is never published.
 
-Demo only.  The seeds are demo seeds, nothing here is scored or evidence for anything,
-and every Isaac flight still needs ``--allow-isaac``.
+Demo only.  The seeds are demo seeds, a demo flight is never scored or evidence for
+anything, and every Isaac flight still needs ``--allow-isaac``.
 
     python3 tools/isaac_demo_capture.py capture OUT CHECKPOINT --allow-isaac [--seeds 999902,999903,999904]
     python3 tools/isaac_demo_capture.py media OUT ../docs/figures [--still OUT/still_999902_048.png]
@@ -39,7 +41,7 @@ ISAAC_W = 1616   # Isaac Sim window; its stage/property panels sit under the rig
 RIGHT_X = 1280   # camera (image_view, top) and RViz2 (bottom) share the right 640 px
 CROP = "1866:1053:54:27"   # the three windows on a GNOME desktop (54 px dock, 27 px top bar)
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-SPEED = 4        # GUI rendering ran Isaac ~3.8x slower than real time, so 4x is ~sim time
+SPEED = 4        # GUI rendering runs Isaac ~3.8x slower than real time, so 4x is ~sim time
 # The VS Code snap leaks GTK/locale paths that make rviz2 load the snap's libpthread and die.
 CLEAN = ("unset GTK_PATH GTK_EXE_PREFIX GIO_MODULE_DIR GTK_IM_MODULE_FILE "
          "GDK_PIXBUF_MODULE_FILE GDK_PIXBUF_MODULEDIR LOCPATH GSETTINGS_SCHEMA_DIR; "

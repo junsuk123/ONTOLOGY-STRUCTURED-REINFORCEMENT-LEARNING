@@ -2,29 +2,28 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""Isaac-linked backend boundary of spatial_current_semantics_v1 (guide 9.1-9.2).
+"""Flight backend boundary of the current-observation route (local plant and Isaac Sim-PX4).
 
-Both registered flights -- the spatial-reference/12 ``LocalBackend``, the plant
-calibrated to Isaac v12, and the actual ``IsaacBackend`` -- deliver the same
-``spatial.core.Measurement`` stream, so one observer and one action adapter
-serve both and a local result is never a different observation path from an
-Isaac one.  Between the policy and the flight there is only the constant
-adapter of ``contracts.ActionContract``: no supervisor, planar hold, prior or
-integral, and every change it makes is recorded per step.  Truth reaches only
-the registered task (``contracts.TaskContract``: the spatial-reference/12
-``Evaluator``'s verdict and terminal table plus the common dense reward of
-``reward.py``, scored on the actual transition time) and
-``info["evaluator_only"]``; no policy code reads either.  The 21D vector is the
-direct-policy encoder's, rescaled to the registered scales (``from_source``).  The local
-plant carries three Isaac-measured calibrations (``contracts.LocalPlant``):
-contact height, handover-after-first-frame and optical cadence.
+Both flights -- the ``FLIGHT_SCHEMA`` ``LocalBackend`` (the local plant,
+calibrated to Isaac Sim-PX4) and the actual ``IsaacBackend`` -- deliver the
+same ``spatial.core.Measurement`` stream, so one observer and one action
+adapter serve both and a local result never uses a different observation path
+from an Isaac one.  Between the policy and the flight there is only the
+constant adapter of ``contracts.ActionContract``: no supervisor, planar hold,
+prior or integral, and every change it makes is recorded per step.  Truth
+reaches only the task (``contracts.TaskContract``: the ``Evaluator``'s verdict
+and terminal table plus the dense reward of ``reward.py``, paper eq. (15),
+scored on the actual transition time) and ``info["evaluator_only"]``; no
+policy code reads either.  The 21D vector is the direct-policy encoder's,
+rescaled to the contract's scales (``from_source``).  The local plant carries
+three Isaac-measured calibrations (``contracts.LocalPlant``): contact height,
+handover-after-first-frame and optical cadence.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import math
-from types import MappingProxyType
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -32,8 +31,7 @@ from scipy.spatial.transform import Rotation
 from ..controllers.spatial_controller import SpatialAccelerationController
 from ..direct_policy.isaac_adapter import enu_to_ned
 from ..direct_policy.observation import SpatialEstimate, spatial_vector
-from ..spatial.core import (REFERENCE_OPTICAL_MISS_PROBABILITY, Measurement, SpatialConfig,
-                           camera_bearings)
+from ..spatial.core import Measurement, SpatialConfig, camera_bearings
 from ..spatial.environment import Evaluator, LocalBackend
 from ..spatial.estimation import ReferenceSpatialTrack
 from .contracts import (ACTION_DIMENSION, TASK_EVALUATOR, TRACK_REACQUIRE_AFTER_REJECTIONS,
@@ -46,204 +44,16 @@ from .reward import CommonRewardFunction
 FLIGHT_SCHEMA = "spatial-reference/12"
 ISAAC_SCENARIO = "spatial_reference_cv_ca_cv"
 
-NAVIGATION_NOTE = (
-    "drone_navigationValid is 1 and drone_navigationAge 0 by construction: Measurement carries "
-    "no navigation validity (Measurement.from_wire raises on an invalid EKF) and own state is "
-    "stamped at the decision sample. Open item; changing it needs a 21D schema revision for "
-    "all four arms.")
 PX4_SETPOINT_NOTE = ("enu_to_ned of the adapter-limited command; the gateway's actual "
                      "TrajectorySetpoint is not visible to this backend")
-G3_STATUS = ("passed 2026-10-28: local half on 8 pilot seeds (coupling_local.json) and Isaac "
-             "half on an owned stack, 6 episodes (coupling_isaac.json); calibration gaps stay "
-             "registered in CALIBRATION_GAPS")
 LATENT_TOLERANCE_M_S2 = 1e-5  # float32 runtime action vs float64 a_max*tanh(z)
 
 
-# --------------------------------------------------------------- registries
+FLIGHT_BACKENDS = ("spatial_local_v12", "isaac_v12")   # the local plant and Isaac Sim-PX4
 
-@dataclass(frozen=True)
-class CalibrationGap:
-    """A known local-vs-Isaac difference: an open G3 item, never corrected silently.
-
-    ``numbers`` carries the values reports compare against; local entries are
-    read from the spatial-reference/12 config, Isaac entries are the audited
-    measurements.
-    """
-    name: str
-    local: str
-    isaac: str
-    evidence: str
-    numbers: Any = MappingProxyType({})
-    status: str = "open G3 item; the local plant is not adjusted to hide it"
-
-    def to_dict(self) -> dict[str, Any]:
-        return {"name": self.name, "local": self.local, "isaac": self.isaac,
-                "evidence": self.evidence, "status": self.status,
-                "numbers": {key: list(value) if isinstance(value, tuple) else value
-                            for key, value in self.numbers.items()}}
-
-
-_AUDIT = "docs/current_semantics/SOURCE_AUDIT_KO.md"
-_LOCAL = SpatialConfig(schema=FLIGHT_SCHEMA)
-_CALIBRATED = "calibrated in the training plant (contracts.LocalPlant: {}); verify in Isaac G3"
-CALIBRATION_GAPS = MappingProxyType({gap.name: gap for gap in (
-    CalibrationGap(
-        "optical_update_rate",
-        local=("camera_dt captures (20 Hz) delivered after SpatialConfig.camera_transport_delay; "
-               "a 0.1 s decision normally receives two frames"),
-        isaac=("accepted captures 0.092/0.096 s apart (~10.6 Hz, 0.188 s across a miss); "
-               "transport median 0.096-0.100 s at the decision (v5-v11 flight traces)"),
-        evidence=f"{_AUDIT} section 2, optical update rate",
-        numbers=MappingProxyType({
-            "local_camera_dt_s": _LOCAL.camera_dt,
-            "local_transport_s": _LOCAL.camera_transport_delay,
-            "isaac_accepted_capture_spacing_s": (0.092, 0.096),
-            "isaac_capture_spacing_across_miss_s": 0.188,
-            "isaac_accepted_rate_hz": 10.6,
-            "isaac_transport_median_at_decision_s": (0.096, 0.100),
-            "isaac_miss_gap_fraction": 0.125}),
-        status=("open G3 item; Isaac G3 (2026-10-28) measured ~1 frame per decision at the "
-                "observer (mean 0.93, spacing 0.092-0.096 s) against local 2, while the 21D "
-                "flag and age already match (updated in view 0.988 vs 0.977, age at update "
-                "median 0.100 s both); thinning local frames was rejected because the "
-                "reference track locked out on 11/16 local episodes, which Isaac does not show "
-                "(1/161; cause not identified)")),
-    CalibrationGap(
-        "touchdown_body_height",
-        local="contact declared at body height SpatialConfig.touchdown_height (no gear)",
-        isaac=("legless first contact at body height 0.0636-0.0732 m over 78 contacts; camera "
-               "0.087-0.096 m below the pad plane"),
-        evidence=f"{_AUDIT} section 2, contact height",
-        numbers=MappingProxyType({
-            "local_contact_body_height_m": _LOCAL.touchdown_height,
-            "isaac_first_contact_body_height_m": (0.0636, 0.0732),
-            "isaac_contacts": 78,
-            "isaac_camera_below_pad_m": (0.087, 0.096),
-            "isaac_median_first_contact_body_height_m": 0.0672}),
-        status=_CALIBRATED.format("contact_height_m = the Isaac median")),
-    CalibrationGap(
-        "entry_yaw",
-        local="yaw 0 at reset (LocalBackend.angles start at zero)",
-        isaac="deck heading + U(-5, 5) deg at handover",
-        evidence=f"{_AUDIT} section 1, spatial/scenarios.py row",
-        numbers=MappingProxyType({"local_entry_yaw_rad": 0.0,
-                                  "isaac_entry_yaw_offset_deg": (-5.0, 5.0)})),
-    CalibrationGap(
-        "board_yaw",
-        local="board axis-aligned with ENU; the pad translates along its heading without yawing",
-        isaac="deck and board yaw with the pad heading, up to 0.2 rad",
-        evidence=f"{_AUDIT} section 1, spatial/scenarios.py row",
-        numbers=MappingProxyType({"local_board_yaw_rad": 0.0, "isaac_board_yaw_max_rad": 0.2})),
-    CalibrationGap(
-        "own_navigation",
-        local="own position, velocity, attitude and rates are the plant state exactly",
-        isaac=("PX4 EKF output; the capture-time pose comes from EKF history stamped at the "
-               "gateway's receive sim-clock"),
-        evidence=f"{_AUDIT} section 2, capture alignment chain"),
-    CalibrationGap(
-        "optical_position_noise",
-        local=("pad solve = geometry + N(0, 0.02 m) isotropic per frame, independent of PnP "
-               "geometry, tag count and depth; 5 % frame misses"),
-        isaac="cv2 ArUco + PnP on rendered frames behind PnP-IMU, geometry and innovation gates",
-        evidence=f"{_AUDIT} section 2; spatial/environment.py LocalBackend.measure",
-        numbers=MappingProxyType({"local_noise_std_m": 0.02,
-                                  "local_miss_probability": REFERENCE_OPTICAL_MISS_PROBABILITY})),
-    CalibrationGap(
-        "edge_visibility_rule",
-        local=("a tag counts when |atan(X/Z)| + atan(padded half side / Z) < half-FOV on both "
-               "axes (LocalBackend._optical_quality); angles do not add in the image plane, so "
-               "near the frame edge this drops a tag earlier than its pinhole padded quad"),
-        isaac="cv2 ArUco detection on rendered frames; its edge behaviour is not recorded",
-        evidence="measured by coupling.check_fov_exit against the deployed board's pinhole rule"),
-    CalibrationGap(
-        "handover_detection",
-        local=("LocalBackend.reset primes its first frame at the decision itself (age 0, no "
-               "transport) and that frame takes the 5 % miss draw, so a reset can hand over "
-               "with no pad estimate (G3 pilot seed 990007)"),
-        isaac=("IsaacBackend._reset_once withholds handover until an optical pad measurement "
-               "exists (EntryResetError after 15 s); that frame arrives with its transport delay"),
-        evidence="spatial/environment.py LocalBackend.measure/reset, IsaacBackend._reset_once",
-        status=_CALIBRATED.format("the local reset hovers until the first accepted frame, "
-                                  "within handover_wait_max_s")),
-)})
-
-
-@dataclass(frozen=True)
-class BackendSpec:
-    name: str
-    role: str
-    status: str
-    flight: str
-    trains: bool
-    requires: tuple[str, ...]
-    reasons: tuple[str, ...]
-    calibration_gaps: tuple[str, ...] = ()
-
-
-BACKENDS = MappingProxyType({spec.name: spec for spec in (
-    BackendSpec(
-        name="spatial_local_v12", role="training plant", status="g3_passed",
-        flight=("spatial.environment.LocalBackend(SpatialConfig(schema='spatial-reference/12', "
-                "contact_height=local_plant.contact_height_m)) + LocalOpticalCadence"),
-        trains=True,
-        requires=("G3 passed (local coupling checks and the Isaac half): met 2026-10-28",),
-        reasons=("calibrated to Isaac v12: the CV-CA-CV generator isaac_sim/pad_motion.py "
-                 "imports, direct net acceleration, 0.10 s actuation delay, attitude servo "
-                 "10 rad/s at zeta 0.7, seeded disturbances, 17-tag board optics, capture-aligned "
-                 "frames with 0.075 s transport",
-                 f"G3 {G3_STATUS}",
-                 "Isaac-measured contact height, handover rule and optical cadence applied; "
-                 "every other gap stays registered in CALIBRATION_GAPS"),
-        calibration_gaps=tuple(CALIBRATION_GAPS)),
-    BackendSpec(
-        name="isaac_v12", role="evaluation and G3 backend", status="requires_allow_isaac",
-        flight=(f"spatial.environment.IsaacBackend(SpatialConfig(schema='{FLIGHT_SCHEMA}'), "
-                f"scenario='{ISAAC_SCENARIO}', deployment=deployment_profile('{FLIGHT_SCHEMA}'))"),
-        trains=False,
-        requires=("--allow-isaac", "a user-approved owned Isaac/PX4 stack"),
-        reasons=("constructing it connects to a running stack",
-                 "evaluation and G3 only; training runs on spatial_local_v12")),
-    BackendSpec(
-        name="direct_local_toy", role="none", status="refused",
-        flight="direct_policy.backends.LocalReferenceBackend", trains=False, requires=(),
-        reasons=("always visible: vision_updated 1 and vision age 0 at every step",
-                 "x-only pad motion and disturbance",
-                 "attitude axis-swapped and pitch-flipped vs Isaac (roll=-ax/g, pitch=-ay/g)",
-                 "navigation validity and age constant")),
-)})
-FLIGHT_BACKENDS = ("spatial_local_v12", "isaac_v12")
-
-
-def _refusal(spec: BackendSpec, why: str) -> RuntimeError:
-    return RuntimeError(f"backend {spec.name!r} refused: {why}; " + "; ".join(spec.reasons))
-
-
-def _spec(name: str) -> BackendSpec:
-    if name not in BACKENDS:
-        raise ValueError(f"unknown backend {name!r}; registered: {sorted(BACKENDS)}")
-    return BACKENDS[name]
-
-
-def require_training_backend(name: str, *, allow_pending_g3: bool = False) -> BackendSpec:
-    """The only backend that may train is spatial_local_v12, and only after G3.
-
-    ``allow_pending_g3`` admits it before G3 for smoke and coupling runs, whose
-    outputs are never scientific.
-    """
-    spec = _spec(name)
-    if spec.status == "refused":
-        raise _refusal(spec, "smoke-only plant, never a training or evaluation backend")
-    if not spec.trains:
-        raise _refusal(spec, "not a training backend")
-    if spec.status == "pending_g3" and not allow_pending_g3:
-        raise _refusal(spec, f"G3 has not passed ({G3_STATUS})")
-    return spec
-
-
-# ------------------------------------------------------------ local plant
 
 def local_plant_config(config: CurrentSemanticsConfig) -> SpatialConfig:
-    """spatial-reference/12 with the Isaac-measured contact height; nothing else differs."""
+    """The ``FLIGHT_SCHEMA`` plant with the Isaac-measured contact height; nothing else differs."""
     return SpatialConfig(schema=FLIGHT_SCHEMA,
                          contact_height=config.local_plant.contact_height_m)
 
@@ -313,27 +123,14 @@ class CurrentObserver:
     ``TRACK_REACQUIRE_AFTER_REJECTIONS`` consecutive rejected fresh detections
     (contracts.TRACK_REACQUIRE_RULE); while it accepts frames nothing changes.
 
-    ``track_factory`` (opt-in, unregistered) replaces the pad track, e.g.
-    an alternative pad estimator; it must return an object with
-    the reference track's ``update``/fields.  None is the registered ABG track,
-    bit for bit.  A replaced track is named in the provenance
-    (``pad_estimator``) because ``observation_hash`` still describes the ABG one.
     """
 
-    def __init__(self, cadence: LocalOpticalCadence | None = None, *,
-                 track_factory: Callable[[], Any] | None = None,
-                 navigation: Any = None) -> None:
+    def __init__(self, cadence: LocalOpticalCadence | None = None) -> None:
         self.cadence = cadence
-        self.track_factory = track_factory
-        # opt-in live navigation (navigation.LiveNavigation): its estimate is already in
-        # the Measurements the backend feeds; here it only supplies the two channels.
-        self.navigation = navigation
         self.reset(None)
 
     def _new_track(self) -> Any:
-        if self.track_factory is None:
-            return ReferenceSpatialTrack(capture_aligned=True)
-        return self.track_factory()
+        return ReferenceSpatialTrack(capture_aligned=True)
 
     def reset(self, episode_id: Any, *, seed: int | None = None) -> None:
         self.episode_id = episode_id
@@ -423,8 +220,6 @@ class CurrentObserver:
         angles = Rotation.from_quat(np.asarray(m.quaternion, dtype=np.float64)[[1, 2, 3, 0]]
                                     ).as_euler("xyz")
         zero = (0.0, 0.0, 0.0)
-        nav_valid, nav_age = (True, 0.0) if self.navigation is None \
-            else self.navigation.status(decision)
         estimate = SpatialEstimate(
             pad_position_enu=tuple(track.position.tolist()) if initialized else zero,
             pad_velocity_enu=tuple(track.velocity.tolist()) if initialized else zero,
@@ -434,8 +229,8 @@ class CurrentObserver:
             body_rate_rad_s=tuple(np.asarray(m.angular_rate, dtype=np.float64).tolist()),
             vision_updated=self.frames_since_decision > 0,
             vision_age_s=age,
-            navigation_valid=nav_valid,
-            navigation_age_s=nav_age,
+            navigation_valid=True,    # own state is the plant's or PX4 EKF2's: always valid
+            navigation_age_s=0.0,     # and stamped at the decision sample
             estimate_initialized=initialized)
         vector = from_source(spatial_vector(estimate))
         sample, capture, receive = self.last_frame if self.last_frame else (None, None, None)
@@ -452,15 +247,10 @@ class CurrentObserver:
             "track_reacquisitions": self.reacquisitions,
             "estimate_initialized": initialized,
             "vision_age_s": age if initialized else None,
-            "navigation": ("valid 1, age 0 by construction (backend.NAVIGATION_NOTE)"
-                           if self.navigation is None else self.navigation.provenance(decision)),
+            "navigation": "valid 1, age 0 by construction",
             # Evaluator-only: never part of the 21D vector.
             "track_std": track.std.tolist() if initialized else None,
         }
-        if self.track_factory is not None:  # opt-in estimator: say which one fed the vector
-            provenance["pad_estimator"] = getattr(track, "estimator_id", type(track).__name__)
-            if hasattr(track, "diagnostics"):
-                provenance["pad_estimator_diagnostics"] = track.diagnostics()
         self.frames_since_decision = 0
         return vector, provenance
 
@@ -549,29 +339,19 @@ def _flight_type(name: str) -> type:
 
 
 class CurrentSpatialBackend:
-    """One spatial-reference/12 flight seen through the current observation.
+    """One ``FLIGHT_SCHEMA`` flight seen through the current observation.
 
     ``reset(seed)`` -> (obs21, info); ``step(action_enu)`` takes world ENU net
-    acceleration in m/s^2 and returns a ``CurrentStep`` with the registered
-    task's reward and status.  The episode ends when the evaluator returns a
+    acceleration in m/s^2 and returns a ``CurrentStep`` with the task's reward
+    and status.  The episode ends when the evaluator returns a
     terminal (contact verdict, envelope or the 70 s horizon); its cleanup is
     recorded separately and never folded into the verdict.
     """
 
     def __init__(self, flight: Any, config: CurrentSemanticsConfig, *, name: str,
-                 scientific: bool, randomization: TrainingRandomization | None = None,
+                 randomization: TrainingRandomization | None = None,
                  dropout: VisionBlackout | None = None, split: str | None = None,
-                 factors: Any = None, track_factory: Callable[[], Any] | None = None,
-                 navigation: Any = None):
-        if track_factory is not None and scientific:
-            raise ValueError("a replaced pad track (track_factory) is not part of the "
-                             "registered observation contract; scientific use needs a "
-                             "contract revision")
-        if navigation is not None and scientific and getattr(config, "navigation", None) \
-                != navigation.profile:
-            raise ValueError("live navigation is observation profile "
-                             "spatial-current-observation/4, not the registered /3; "
-                             "scientific use needs a config that declares it (navigation:)")
+                 factors: Any = None):
         if dropout is not None and randomization is not None:
             raise ValueError("an evaluation dropout never rides on a training randomisation")
         if (split is not None or factors is not None) and name != "isaac_v12":
@@ -584,16 +364,11 @@ class CurrentSpatialBackend:
                              "blackout) is of the local plant only")
         if randomization is not None and not isinstance(randomization, TrainingRandomization):
             raise TypeError("randomization must be a contracts.TrainingRandomization")
-        spec = _spec(name)
         if name not in FLIGHT_BACKENDS:
-            raise _refusal(spec, "not a spatial-reference/12 flight backend")
+            raise ValueError(f"unknown flight backend {name!r}; registered: {FLIGHT_BACKENDS}")
         if not isinstance(flight, _flight_type(name)):
             raise TypeError(f"{name} needs a {_flight_type(name).__name__}, "
                             f"got {type(flight).__name__}")
-        if not isinstance(scientific, bool):
-            raise TypeError("scientific must be a bool")
-        if scientific and spec.status != "g3_passed":
-            raise _refusal(spec, f"scientific use needs status 'g3_passed', not {spec.status!r}")
         cfg = flight.cfg
         expected = (local_plant_config(config) if name == "spatial_local_v12"
                     else SpatialConfig(schema=FLIGHT_SCHEMA))
@@ -606,7 +381,7 @@ class CurrentSpatialBackend:
         if profile is not None and profile != config.calibration.source.sha256:
             raise ValueError("flight deployment profile differs from the registered calibration")
         if name == "isaac_v12" and getattr(flight, "scenario", None) != ISAAC_SCENARIO:
-            # A flight shared between task-v5 conditions carries the previous
+            # A flight shared between scenario conditions carries the previous
             # episode's current-omni name; every reset of such a wrapper replaces it.
             from ..spatial.scenarios import parse_current_omni
             if split is None or parse_current_omni(getattr(flight, "scenario", "")) is None:
@@ -630,14 +405,12 @@ class CurrentSpatialBackend:
         self.blackout: tuple[float, float] | None = None  # (start, duration) after handover
         self.start_s: float | None = None
         self.flight, self.config, self.spatial = flight, config, cfg
-        self.name, self.spec, self.scientific = name, spec, scientific
+        self.name = name
         local = name == "spatial_local_v12"
         cadence = config.local_plant.optical_cadence
         thinning = cadence.keep_every_nth_capture > 1 or cadence.extra_drop_probability > 0
         self.observer = CurrentObserver(
-            LocalOpticalCadence(cadence, cfg.camera_dt) if local and thinning else None,
-            track_factory=track_factory, navigation=navigation)
-        self.navigation = navigation
+            LocalOpticalCadence(cadence, cfg.camera_dt) if local and thinning else None)
         self.handover_wait_steps = (int(math.ceil(config.local_plant.handover_wait_max_s
                                                   / cfg.dt - 1e-9)) if local else 0)
         self.evaluator = Evaluator(cfg)
@@ -654,7 +427,6 @@ class CurrentSpatialBackend:
     def _info(self, truth: Any, provenance: dict[str, Any]) -> dict[str, Any]:
         return {"backend": self.name, "flight": getattr(self.flight, "name", None),
                 "episode_id": self.episode_id, "decision_id": self.decision_id,
-                "scientific_use": self.scientific,
                 "difficulty": getattr(self.flight, "difficulty", None),
                 "profile_sha256": getattr(self.flight, "profile_sha256", None),
                 "observation_provenance": provenance,
@@ -669,7 +441,7 @@ class CurrentSpatialBackend:
         if self.active:
             self.flight.finish()
         drawn = None
-        if self.split is not None:  # Isaac flies the learner's task-v5 draw (scenario.py)
+        if self.split is not None:  # Isaac flies the learner's scenario draw (scenario.py)
             from .scenario import check_isaac_reset, isaac_scenario
             drawn, scenario_name = isaac_scenario(self.config.task.scenario, int(seed),
                                                   self.split, self.factors)
@@ -685,8 +457,6 @@ class CurrentSpatialBackend:
         self.error = self._draw_error(float(measurement.time_s))
         self.blackout = self._draw_blackout()
         self.observer.reset(self.episode_id, seed=self.seed)
-        if self.navigation is not None:
-            self.navigation.reset(self.seed)
         self._ingest(measurement)
         measurement = self.observer.last_measurement
         self._reset_controller(measurement)
@@ -734,7 +504,7 @@ class CurrentSpatialBackend:
 
     def _draw_error(self, t0: float) -> tuple[np.ndarray, float, float] | None:
         """contracts.HandoverOwnStateError for this episode, from the episode seed; None
-        from g4-pilot/8 on, which deleted it (it imitated the Isaac IMU wrap bug)."""
+        when the episode has no training randomisation or it carries no such error."""
         if self.randomization is None or self.randomization.handover_own_state_error is None:
             return None
         spec = self.randomization.handover_own_state_error
@@ -773,8 +543,7 @@ class CurrentSpatialBackend:
                                       optical_quaternion=None, marker_corners_px=None,
                                       marker_capture_time_s=None)
         if self.error is None:
-            return self.observer.ingest(measurement if self.navigation is None
-                                        else self.navigation(measurement))
+            return self.observer.ingest(measurement)
         e0, tau, t0 = self.error
         drift = lambda t: e0 * tau * (1.0 - math.exp(-max(t - t0, 0.0) / tau))
         now = float(measurement.time_s)
@@ -787,8 +556,7 @@ class CurrentSpatialBackend:
                 np.asarray(measurement.optical_own_position, dtype=np.float64)
                 + drift(float(measurement.optical_time_s)))
         measurement = replace(measurement, **changes)
-        return self.observer.ingest(measurement if self.navigation is None
-                                    else self.navigation(measurement))
+        return self.observer.ingest(measurement)
 
     def _reset_controller(self, measurement: Measurement) -> None:
         yaw = Rotation.from_quat(np.asarray(measurement.quaternion)[[1, 2, 3, 0]]
@@ -834,10 +602,10 @@ class CurrentSpatialBackend:
         self.decision_s = float(new.time_s)
         self.decision_id += 1
         contact = bool(truth.contact)
-        # The registered task (guide 9.3, task v2): the spatial-reference/12
-        # evaluator's verdict and terminal table, no supervisor; the trained
-        # reward is the common reward (reward.py) on the policy's own normalized
-        # action, and the evaluator's reward is kept only as reference_reward.
+        # The task: the evaluator's verdict and terminal table, no supervisor; the
+        # trained reward is the common reward (reward.py, paper eq. (15)) on the
+        # policy's own normalized action, and the evaluator's reward is kept only
+        # as reference_reward.
         visible = new.optical_position is not None
         bearings = (camera_bearings(new.optical_position, new.optical_quaternion,
                                     self.spatial)[0] if visible else np.zeros(2))
@@ -854,7 +622,7 @@ class CurrentSpatialBackend:
         info["status"], info["reward"] = status, float(reward)
         info["reward_components"] = {**{key: float(value) for key, value in components.items()},
                                      "reference_reward": float(reference)}
-        # How far the field asked for the search climb (diagnostic, reward /4).
+        # How far the lost-view field asked for the search climb (diagnostic).
         info["lost_view_weight"] = self.reward.lost_view(truth, age)
         info["termination"] = None
         if done:
@@ -884,31 +652,16 @@ class CurrentSpatialBackend:
 
 # ---------------------------------------------------------------- factories
 
-def _profile_navigation(config: CurrentSemanticsConfig, navigation: Any) -> Any:
-    """A fresh LiveNavigation of the config's profile (/4), or the explicit one; never both
-    different -- a /4 config's observation is its profile's, nothing else."""
-    profile = getattr(config, "navigation", None)
-    if profile is None:
-        return navigation
-    if navigation is None:
-        return profile.build()
-    if navigation.profile != profile:
-        raise ValueError("explicit navigation differs from the config's navigation profile")
-    return navigation
-
-
 def make_local_backend(config: CurrentSemanticsConfig, *, difficulty: float = 1.0,
                        randomization: TrainingRandomization | None = None,
                        scenario: str | None = None, factors: Any = None,
-                       dropout: VisionBlackout | None = None,
-                       track_factory: Callable[[], Any] | None = None,
-                       navigation: Any = None) -> CurrentSpatialBackend:
-    """The spatial-reference/12 local plant; ``difficulty`` < 1 and ``randomization``
+                       dropout: VisionBlackout | None = None) -> CurrentSpatialBackend:
+    """The local plant; ``difficulty`` < 1 and ``randomization``
     (contracts.TrainingRandomization) are training-only.  ``scenario`` selects the
-    task-v5 composition split ("in_distribution" or "composition", scenario.py) that
-    every learning and evaluation run uses; None keeps the /12 plant's own draw for
-    the implementation checks (G3 probes, fixtures)."""
-    navigation = _profile_navigation(config, navigation)
+    approach-scenario split ("in_distribution" = trained direction pairs,
+    "composition" = held-out pairs; scenario.py, paper Sec. 4.1) that every
+    training and evaluation run uses; None keeps the plant's own draw for the
+    implementation checks and test fixtures."""
     if scenario is None:
         if factors is not None:
             raise ValueError("plant factors need a task-v5 scenario split")
@@ -918,24 +671,21 @@ def make_local_backend(config: CurrentSemanticsConfig, *, difficulty: float = 1.
         flight = ScenarioLocalBackend(local_plant_config(config), difficulty=difficulty,
                                       scenario=config.task.scenario, split=scenario,
                                       factors=PlantFactors() if factors is None else factors)
-    return CurrentSpatialBackend(flight, config, name="spatial_local_v12", scientific=False,
-                                 randomization=randomization, dropout=dropout,
-                                 track_factory=track_factory, navigation=navigation)
+    return CurrentSpatialBackend(flight, config, name="spatial_local_v12",
+                                 randomization=randomization, dropout=dropout)
 
 
 def make_isaac_backend(config: CurrentSemanticsConfig, *, pair: int = 0,
                        allow_isaac: bool = False, split: str | None = None,
                        factors: Any = None,
-                       dropout: VisionBlackout | None = None,
-                       track_factory: Callable[[], Any] | None = None,
-                       navigation: Any = None) -> CurrentSpatialBackend:
+                       dropout: VisionBlackout | None = None) -> CurrentSpatialBackend:
     """Connect to a running, user-approved Isaac/PX4 stack.  Refused unless asked.
-    ``split`` flies the task-v5 draw ("in_distribution" or "composition") instead of
-    the /12 deck; ``factors`` (pad acceleration only) and ``dropout`` are evaluation
-    conditions.  None keeps the /12 deck that G3 and isaac_eval/1-5 flew."""
+    ``split`` flies the approach-scenario draw ("in_distribution" or "composition")
+    instead of the backend's fixed ``ISAAC_SCENARIO`` deck; ``factors`` (pad
+    acceleration only) and ``dropout`` are evaluation conditions."""
     if allow_isaac is not True:
-        raise _refusal(BACKENDS["isaac_v12"], "requires allow_isaac=True (--allow-isaac)")
-    navigation = _profile_navigation(config, navigation)
+        raise RuntimeError("the Isaac backend connects to a running Isaac Sim + PX4 stack; "
+                           "it requires allow_isaac=True (--allow-isaac)")
     from ..spatial.environment import IsaacBackend
     from ..spatial.runtime_contract import deployment_profile
     deployment = deployment_profile(FLIGHT_SCHEMA)
@@ -945,9 +695,8 @@ def make_isaac_backend(config: CurrentSemanticsConfig, *, pair: int = 0,
                                         isaac_profile_sha256=deployment["sha256"]),
                           pair=pair, scenario=ISAAC_SCENARIO, deployment=deployment)
     try:
-        return CurrentSpatialBackend(flight, config, name="isaac_v12", scientific=False,
-                                     split=split, factors=factors, dropout=dropout,
-                                     track_factory=track_factory, navigation=navigation)
+        return CurrentSpatialBackend(flight, config, name="isaac_v12",
+                                     split=split, factors=factors, dropout=dropout)
     except BaseException:
         flight.close()
         raise

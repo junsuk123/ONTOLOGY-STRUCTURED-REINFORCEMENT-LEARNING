@@ -2,12 +2,14 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""Versioned contracts for the MATLAB direct-policy port.
+"""Versioned observation/graph/action contracts and the canonical digest.
 
-The port deliberately does not reuse the existing ``landing`` packet or graph:
-those implement the reference-v28 nine-node study, while the pinned MATLAB
-source uses a 12-value observation and a seven-node graph.  Hashes are split so
-an algorithm change is not confused with a task or execution-backend change.
+``digest`` is the canonical sha256 behind every contract and plan hash, and
+``SPATIAL_FIELDS`` registers the 21-channel spatial observation the
+current-semantics route is built on.  The planar contracts (a 12-value observation
+and a seven-node graph) belong to an earlier direct-policy study and keep their
+own version strings.  Hashes are split so an algorithm change is not confused
+with a task or execution-backend change.
 """
 from __future__ import annotations
 

@@ -136,9 +136,8 @@ from pxr import Gf, PhysxSchema, Sdf, Usd, UsdGeom, UsdLux, UsdPhysics, UsdShade
 
 from keypoint_geometry import CameraModel, project_landing_pad
 from landing_pad_visual import LandingPadVisual
-# ``marker_vision`` is the retained legacy ArUco path (``vision.mode: aruco``).
-# The primary two-pipeline benchmark runs ``vision.mode: keypoint_fiducial``
-# and never constructs a detector; see ``docs/TWO_PIPELINE_COMPARISON.md``.
+# ``marker_vision`` is the ArUco path (``vision.mode: aruco``) the spatial
+# profiles fly; ``vision.mode: keypoint_fiducial`` never constructs a detector.
 from marker_vision import (
     nadir_footprint_m,
     R_BODY_FROM_OPTICAL,
@@ -172,13 +171,12 @@ class _KeptRootFs:
     Pegasus gives each PX4 a ``tempfile.TemporaryDirectory`` and runs it from
     there, so PX4's own ``./log/<date>/<time>.ulg`` flight logs land inside it.
     Nothing reads them and, because the simulator is normally killed rather
-    than shut down, nothing removes them either: 69.9 GB across 3325 files had
-    collected under /tmp by 2026-09-24, while the logs that would have
-    explained that day's failures were the ones being deleted.
+    than shut down, nothing removes them either: tens of GB collect under /tmp
+    over a long campaign, while the logs that would explain a failure are the
+    ones that get deleted.
 
     Same interface, different lifetime: a per-run directory in the project, so
-    a flight log sits beside the run that flew it and reaches Synology Drive
-    with everything else. ``cleanup`` is deliberately a no-op -- that is the
+    a flight log sits beside the run that flew it. ``cleanup`` is deliberately a no-op -- that is the
     entire point -- and the per-run naming keeps PX4 from inheriting another
     run's ``eeprom``/``dataman`` state the way a shared directory would.
     """
@@ -417,7 +415,7 @@ class DownwardCamera:
         self.mount = np.array([float(v) for v in camera_cfg["mount_translation_flu_m"]])
         self.clipping = tuple(float(v) for v in camera_cfg.get("clipping_range_m", (0.02, 60.0)))
         self.camera_matrix = intrinsics_from_fov(self.width, self.height, self.fov_deg)
-        # Legacy ArUco path only. In the primary keypoint benchmark ``board``
+        # ArUco path only. With ``vision.mode: keypoint_fiducial`` ``board``
         # is None, no detector exists, and nothing downstream reads a marker
         # solve or a marker quality.
         self.estimator = (
@@ -578,7 +576,7 @@ class DownwardCamera:
         """Operator overlay of the projected landmarks; consumed by nobody.
 
         Published on the diagnostics topic only. It cannot influence the actor
-        observation, the reward, the R-GAT input, resets, labels or metrics,
+        observation, the reward, the policy graph, resets, labels or metrics,
         all of which are computed from other code paths entirely.
         """
         import cv2
@@ -1494,9 +1492,9 @@ class LandingWorld:
 
         vision_cfg = CONFIG["vision"]
         vision_mode = str(vision_cfg.get("mode", "pose_proxy"))
-        # ``keypoint_fiducial`` is the primary benchmark target: six fixed
-        # landmarks a learned encoder detects. ``aruco`` is the retained legacy
-        # detector path and is never used by the two primary pipelines.
+        # ``aruco``: the multi-scale marker board and its detector, which the
+        # spatial profiles fly. ``keypoint_fiducial``: six fixed painted
+        # landmarks and no detector.
         self.keypoint_vision = vision_mode == "keypoint_fiducial"
         self.vision_enabled = vision_mode in {"aruco", "keypoint_fiducial"}
         self.pad = None
@@ -1569,8 +1567,8 @@ class LandingWorld:
         self.wind_truth_pub = node.create_publisher(
             Vector3Stamped, ns + "/environment/wind", 10)
         self.force_pub = node.create_publisher(Vector3Stamped, ns + "/environment/aero_force", 10)
-        # Legacy ArUco detector outputs. Published only in ``vision.mode:
-        # aruco``; the primary keypoint benchmark leaves both silent.
+        # ArUco detector outputs. Published only in ``vision.mode: aruco``;
+        # ``keypoint_fiducial`` leaves both silent.
         # Diagnostic overlay: drawn only while something subscribes to it, and
         # never when this is false. See _operator_overlay_wanted.
         self.operator_overlay_enabled = bool(
@@ -1581,10 +1579,8 @@ class LandingWorld:
         # one JSON message per rendered frame (also when nothing was seen).
         self.marker_corners_pub = node.create_publisher(
             String, ns + "/perception/marker_corners", 10)
-        # Training-label-only: the simulator's pad-relative UAV pose, stamped
-        # with the frame it belongs to, so keypoint supervision can project the
-        # known landmarks. Never consumed by the actor, the reward or the
-        # online R-GAT; see python/ontology_rgat/perception/pad_geometry.py.
+        # Simulator truth: the pad-relative UAV pose, stamped with the frame it
+        # belongs to. Never an actor, observation or estimator input.
         self.pad_truth_pose_pub = node.create_publisher(
             PoseStamped, ns + "/perception/pad_relative_truth_pose", 10)
         self.pad_contact_pub = node.create_publisher(Bool, ns + "/perception/pad_contact", 1)
@@ -1609,7 +1605,7 @@ class LandingWorld:
         self.deck_pub = node.create_publisher(
             Odometry, landing_topic("/landing_pad/state/odom", "pad/state/odom"), 10)
         # The simulator's truth, for scoring the episode afterwards. Nothing on
-        # the control path subscribes to it; see docs/ARCHITECTURE.md, "GNSS".
+        # the control path subscribes to it.
         self.deck_truth_pub = node.create_publisher(
             Odometry, landing_topic(
                 "/landing_pad/state/odom_truth", "pad/state/odom_truth"), 10)
@@ -1815,7 +1811,7 @@ class LandingWorld:
             req.get("scenario", "training_random_walk"), hard_reset=True)
         initial = benchmark.get("initial_conditions") or {}
         planar_entry = bool(benchmark.get("planar_entry", False))
-        # spatial_current_semantics_v1 task v5: the learner's draw fixes the entry
+        # spatial_current_semantics_v1: the learner's draw fixes the entry
         # bearing and radius (own minus pad = -r (cos b, sin b), ENU) and the deck
         # heading; the seed still draws the altitude and the yaw misalignment.
         current_omni = deck.get("current_omni")
@@ -2316,8 +2312,8 @@ class LandingWorld:
         Only the ``training_random_walk_escape_burst`` scenario arms a dash
         (``PadTrajectory.escape_burst_armed``), and only after the policy has
         the vehicle. The gate is ``pad_motion.escape_burst_due``: close and
-        low for a moment, or a fallback time so the demonstration always
-        carries the event. The dash heads straight out behind the camera --
+        low for a moment, or a fallback time so every episode carries the
+        event. The dash heads straight out behind the camera --
         the camera looks forward and down, so behind it the frame ends at the
         nadir -- which is what makes the pad leave the frame within a second
         or two of relative motion instead of after metres of forward footprint.
@@ -2687,7 +2683,7 @@ class LandingWorld:
         BGR->RGB convert and a 491 KB ``tobytes`` per camera per rendered
         frame, all of it on the single thread that also steps physics and
         renders. Nothing scientific reads it -- not the actor observation, the
-        reward, the R-GAT input, the labels or any metric -- so when no
+        reward, the policy graph, the labels or any metric -- so when no
         operator tool is subscribed there is nothing to pay it for.
 
         ``vision.operator_overlay`` can switch it off even while RViz is
@@ -2701,7 +2697,7 @@ class LandingWorld:
 
     def _publish_annotated_camera(self, stamp) -> None:
         """Publish the most recent operator view as a standard ROS ``rgb8`` image."""
-        # Also gated here, not only at the keypoint call site: the legacy
+        # Also gated here, not only at the keypoint call site: the ArUco
         # detector path annotates inside ``observe`` and would otherwise still
         # pay the 491 KB copy and the publish with nothing listening.
         if not self._operator_overlay_wanted():
@@ -2754,9 +2750,9 @@ class LandingWorld:
         # samples the gateway asynchronously and takes ~0.9 s of wall clock to
         # produce each command, while this loop advances the world as fast as
         # render and physics allow. So the simulated time inside one control
-        # step is whatever this loop happened to manage -- measured on
-        # 2026-09-22 as 0.104 s when four pairs render concurrently and 0.7-0.9 s
-        # when they desynchronise, i.e. an effective control rate swinging
+        # step is whatever this loop happened to manage -- measured as 0.104 s
+        # when four pairs render concurrently and 0.7-0.9 s when they
+        # desynchronise, i.e. an effective control rate swinging
         # between 9.6 Hz and 1.2 Hz with nothing enforcing either.
         #
         # ``isaac.max_sim_speed_ratio`` caps simulated seconds per wall second.
@@ -2780,7 +2776,7 @@ class LandingWorld:
         PACING_REPORT_S = 60.0
         # The per-step correction removes the variance but leaves a systematic
         # offset: sleeping costs more wall than it asks for, so the loop lands
-        # below the rate it aims at. Measured 2026-09-22: a steady 0.070
+        # below the rate it aims at. Measured: a steady 0.070
         # against a 0.115 target, four windows running 0.069-0.070.
         #
         # Rather than divide by a fitted constant -- which is what failed three

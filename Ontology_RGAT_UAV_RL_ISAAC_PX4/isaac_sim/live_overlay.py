@@ -11,8 +11,7 @@ inside the horizontal success tolerance. This draws those, so the simulator
 window is a usable live view of a landing rather than only a physics picture.
 
 It uses the debug-draw extension, which draws lines and points and has no text
-primitive. The textual heads-up display therefore lives in RViz 2 (see
-``python/ontology_rgat/viz/rviz.py``), and this overlay stays geometric.
+primitive, so this overlay stays geometric; text belongs in RViz 2.
 
 Everything degrades to a no-op if the extension is unavailable, because a
 simulation run must not fail for want of a decoration.

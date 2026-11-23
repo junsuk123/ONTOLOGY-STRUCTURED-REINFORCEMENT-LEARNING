@@ -1,0 +1,20 @@
+# The ten local evaluation cells of the paper (Table 4), flown by the equal-budget comparison.
+# Each training seed has its own environments, shared by the policies of that seed; the policy
+# is deterministic and the difficulty is 1.0.
+# "development/1" is the name under which these cells were fixed before any compared model
+# trained; equal_budget_v1.yaml names it in cells_from.
+protocol: development/1
+# An exogenous dropout starts U(start) s after handover.
+dropout_start_s: [0.5, 4.0]
+cells:
+  composition_id: {split: in_distribution}                     # trained direction combinations
+  composition_ood: {split: composition}                        # held-out direction combinations
+  motion_id: {split: in_distribution}                          # nominal platform motion
+  motion_ood: {split: in_distribution, pad_acceleration_m_s2: [0.6, 0.9]}
+  dropout_id: {split: in_distribution, dropout_s: [1.0, 3.0]}
+  dropout_ood: {split: in_distribution, dropout_s: [3.0, 4.0]}
+  noise_id: {split: in_distribution}                           # nominal optical noise
+  noise_ood: {split: in_distribution, optical_noise_scale: 5.0}
+  combined_id: {split: in_distribution, dropout_s: [1.0, 3.0]}
+  combined_ood: {split: in_distribution, pad_acceleration_m_s2: [0.6, 0.9],
+                 dropout_s: [3.0, 4.0], optical_noise_scale: 5.0}

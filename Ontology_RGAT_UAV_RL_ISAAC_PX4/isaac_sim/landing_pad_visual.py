@@ -5,10 +5,10 @@
 
 """The six-keypoint fiducial landing target painted on the deck.
 
-This replaces the multi-scale ArUco board on the primary benchmark path.  The
-deployed policy perceives the pad with a learned six-keypoint encoder, so the
-pad must carry six distinctive, geometrically fixed landmarks rather than
-bit-coded tags that a detector decodes into a pose.
+Used when ``vision.mode`` is ``keypoint_fiducial``; the spatial profiles fly
+the multi-scale ArUco board of :mod:`marker_vision` instead.  The target
+carries six distinctive, geometrically fixed landmarks rather than bit-coded
+tags that a detector decodes into a pose.
 
 No ArUco dictionary, marker id or ``cv2.aruco`` call appears anywhere in this
 module.  Only ``cv2``'s plain drawing primitives are used to rasterize the
@@ -22,8 +22,8 @@ landmarks, learnable from partial views, resolvable at both approach and
 touchdown scale.
 
 * Six bullseye landmarks sit on the vertices of the pad-centred hexagon
-  defined once in :mod:`keypoint_geometry` -- the exact points the keypoint
-  supervision labels.
+  defined once in :mod:`keypoint_geometry` -- the exact points that module
+  projects.
 * Each landmark carries ``index + 1`` solid pips on a small circle around it,
   so the six are mutually distinguishable without any bit decoding.
 * Concentric graduation rings and radial spokes aligned with the landmark
@@ -31,7 +31,7 @@ touchdown scale.
   itself has already grown past the frame.
 
 The geometry is imported from :mod:`keypoint_geometry` rather than restated,
-so the painted target and the supervised labels cannot drift apart.
+so the painted target and its projected geometry cannot drift apart.
 """
 
 from __future__ import annotations
@@ -212,8 +212,8 @@ class LandingPadVisual:
             unlock() called by non-owning thread
 
         in a ``libcarb.assets`` worker on a ``libcarb.tasking`` fiber.
-        Measured on 2026-09-15 with everything else held fixed: five boots
-        without this import crashed, two with it reached "ready for takeoff".
+        Measured with everything else held fixed: five boots without this
+        import crashed, two with it reached "ready for takeoff".
         Importing the shim during ``spawn`` pulls in the legacy
         ``omni.isaac.core`` extension, and that side effect is what avoids the
         race.
@@ -223,9 +223,10 @@ class LandingPadVisual:
         silently reverts. ``landing_world.settle_stage_assets`` now addresses
         the same race at its source -- this material is authored only once the
         referenced rover/quadrotor/city assets have finished loading -- but
-        that fix and this import were never measured apart, so both stay. The crash it prevents costs a full simulator boot
-        and looks like an unrelated Isaac fault, so if you change this line,
-        boot the two-pair stage several times before believing it.
+        that fix and this import were never measured apart, so both stay. The
+        crash it prevents costs a full simulator boot and looks like an
+        unrelated Isaac fault, so if you change this line, boot the stage
+        several times before believing it.
         """
         from omni.isaac.core.materials import OmniPBR
         return OmniPBR

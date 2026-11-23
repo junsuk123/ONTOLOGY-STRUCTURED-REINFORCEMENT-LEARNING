@@ -7,11 +7,11 @@
 Isaac wrote the seeded handover velocity step in ONE 4 ms physics tick. The VN-100
 model (isaac_sim/vn100_imu.py) differentiates successive velocities and clipped at
 +-16 g, i.e. at most 0.63 m/s per axis per tick, and PX4 SITL's int16 FIFO turned
-a value pinned at +16 g (FRD) into -16 g. Over the 700 recorded current-semantics
+a value pinned at +16 g (FRD) into -16 g. Over 700 recorded current-semantics
 Isaac episodes: kick measurable 104/110 landed, clipped only 207/232, inverted
 61/358 with 112 of the 115 handover tilts (local plant on the same cases: 90-94 %).
-That model predicts PX4's first-decision velocity change on all 600
-isaac-development episodes to a median 0.03 m/s per axis with every sign right.
+That model predicts PX4's first-decision velocity change on 600 recorded Isaac
+episodes to a median 0.03 m/s per axis with every sign right.
 This replays the IMU arithmetic on the old and the new application.
 """
 
@@ -32,8 +32,8 @@ from sensor_profiles import saturate_16bit, vn100_pegasus_config  # noqa: E402
 from ontology_rgat.benchmarks.randomization import sample_domain_randomization  # noqa: E402
 
 G = np.array([0.0, 0.0, -9.80665])  # ENU, as vn100_imu.GRAVITY_VECTOR is used there
-# Every seed flown on Isaac by this route (isaac-eval/1-/5, isaac-development/1)
-# and the two spatial-reference flight seeds.
+# Isaac flight seeds of earlier evaluations on this route and the two
+# spatial-reference flight seeds.
 FLOWN = list(range(994001, 994051)) + list(range(994101, 994131)) + [12000, 12001]
 
 

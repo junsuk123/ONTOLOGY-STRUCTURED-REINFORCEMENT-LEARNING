@@ -2,9 +2,11 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""Budget-matched actor-critics of spatial_current_semantics_v1 (guide 8.3-8.4).
+"""Budget-matched actor-critics of the comparison arms (paper Sec. 4.2).
 
-The four arms differ only in what the actor reads -- raw21, phi44, or raw21
+``raw_ppo`` is the paper's MLP PPO and ``untyped_gnn_ppo`` its untyped-graph
+PPO; the ORL actor is built in ``orl.py`` and reached through ``build_model``.
+The four arms here differ only in what the actor reads -- raw21, phi44, or raw21
 plus an 8-dimensional readout of the untyped or the typed graph -- and share
 one raw21 critic design and a global, unclamped log_std.  The policy is a
 latent Gaussian squashed once, ``action = a_max * tanh(z)``, with the
@@ -74,7 +76,7 @@ def _mlp(inputs: int, hidden: int, outputs: int, generator: torch.Generator) -> 
 
 
 class RelationalAttentionLayer(nn.Module):
-    """One relational attention layer over a fixed edge list.
+    """One relational attention layer over a fixed edge list (paper eq. (5)-(8)).
 
     Edge j -> i of relation r sends ``m_ij = W_r h_j`` scored by
     ``leaky_relu(att_src . m_ij + att_dst . h_i + relation_bias_r)``; the
@@ -311,20 +313,15 @@ class CurrentActorCritic(nn.Module):
 
 
 def build_model(arm: str, config: CurrentSemanticsConfig, *, seed: int) -> CurrentActorCritic:
-    """A registered arm, an ORL arm (``orl``) or ORL's rule control (``rule_control``); the
-    name carries the ORL spec hash, so a worker rebuilds the same network from it and a
-    checkpoint never binds to another.  The relation-shuffle and bond/1 arms were archived
-    on 2026-11-20 (archive/non_orl_20261120.tar.zst)."""
+    """An arm of the base contract (``ARMS``) or the ORL arm ``orl_ppo:<hash>``; the ORL name
+    carries the spec hash, so a worker rebuilds the same network from it and a checkpoint
+    never binds to another."""
     if arm in ARMS:
         return CurrentActorCritic(arm, config, seed=seed)
     if isinstance(arm, str) and arm.startswith("orl_ppo"):
         from .orl import orl_model
         return orl_model(arm, config, seed=seed)
-    if isinstance(arm, str) and arm.startswith("semantic_mlp_rule_ppo"):
-        from .rule_control import control_model
-        return control_model(arm, config, seed=seed)
-    raise ValueError(f"unknown arm {arm!r}: registered {ARMS}, orl_ppo:<hash> or "
-                     "semantic_mlp_rule_ppo:<hash>")
+    raise ValueError(f"unknown arm {arm!r}: {ARMS} or orl_ppo:<hash>")
 
 
 # ----------------------------------------------------------------- tensors

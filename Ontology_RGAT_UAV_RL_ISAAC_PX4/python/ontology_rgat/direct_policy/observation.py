@@ -2,11 +2,11 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""Causal observation assembly for the direct-policy port.
+"""Causal observation assembly for the direct-policy observation vectors.
 
 Only timestamped marker corners and fused own navigation enter the estimator.
-The public vector functions are intentionally small and deterministic so their
-MATLAB golden fixtures can be compared without Isaac or ROS installed.
+The public vector functions are intentionally small and deterministic so they
+can be tested without Isaac or ROS installed.
 """
 from __future__ import annotations
 
@@ -68,7 +68,7 @@ class SpatialEstimate:
 
 
 def planar_vector(state: PlanarEstimate) -> np.ndarray:
-    """The pinned MATLAB ``toVector`` operation in its registered field order."""
+    """The planar reference ``toVector`` operation in its registered field order."""
     pad_p = np.asarray(state.pad_position_xz, dtype=np.float64)
     pad_v = np.asarray(state.pad_velocity_xz, dtype=np.float64)
     own_p = np.asarray(state.own_position_xz, dtype=np.float64)

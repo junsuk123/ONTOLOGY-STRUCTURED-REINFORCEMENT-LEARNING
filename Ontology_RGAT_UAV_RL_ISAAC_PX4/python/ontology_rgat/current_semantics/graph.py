@@ -2,17 +2,18 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""The one proposed ontology graph of spatial_current_semantics_v1 (guide 8.2).
+"""The eight-node graph of the graph-readout arms; its untyped copy is the graph
+of the untyped-graph PPO baseline (paper Sec. 4.2).  ORL's 19-node graph is in
+``orl.py``.
 
-A candidate frozen before training, not a validated graph: eight nodes,
-fourteen semantic edges and eight self loops.  An edge runs source -> target,
-the direction its message travels.  Every primitive node (Q, G, M, A) reaches
-LandingContext only through P, O or C, i.e. in exactly two hops, which is why
-the encoder applies its shared layer twice; there is deliberately no O -> C
-edge, which would change that path structure.  The untyped control keeps every
-(source, target) pair and erases only the relation names, so the two graph
-arms differ in relation typing alone.  Relation names select weights; they are
-never executed as rules or gates.
+Eight nodes, fourteen semantic edges and eight self loops.  An edge runs
+source -> target, the direction its message travels.  Every primitive node
+(Q, G, M, A) reaches LandingContext only through P, O or C, i.e. in exactly
+two hops, which is why the encoder applies its shared layer twice; there is
+deliberately no O -> C edge, which would change that path structure.
+``untyped`` keeps every (source, target) pair and erases only the relation
+names.  Relation names select weights; they are never executed as rules or
+gates.
 """
 from __future__ import annotations
 

@@ -2,37 +2,33 @@
 # Maintainer: Jun Suk Kim (김준석) <junsuk55944587@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""equal-budget/1 and isaac-equal-budget/1: does ORL's faster curriculum (learning-speed/1)
-become better landing at the SAME training budget, on the local plant and on Isaac/PX4?
+"""Equal-budget comparison and closed-loop evaluation (paper Secs. 4.4, 5.2 and 5.3).
 
-learning-speed/1 (status doc 21.3) found ORL (``orl/1``) reaching difficulty 1.0 in about
-0.55x the updates of PPO and the untyped GNN on fresh seeds.  It measured the curriculum,
-not landing.  This protocol measures landing after a fixed number of PPO updates.
+Question: does ORL's faster curriculum become better landing at the same number of PPO
+updates, locally, and does it land in Isaac Sim-PX4?
 
-Procedure (equal-budget/1).  Each training seed trains the proposed arm and every comparison
-arm with the base contract's G4 recipe (budget per update, curriculum, PPO settings, training
-randomisation) for ``max(budgets)`` updates, the same episode seeds for all arms of a seed.
-The weights after exactly B updates, for every registered budget B, are kept
-(``pilot.train_seed(snapshots=...)``); no checkpoint is selected and no validation runs.
-Each budget's weights fly the ten development cells (``development.cell_conditions``,
-deterministic policy) on environments shared by every arm and budget of a training seed.
+Procedure (equal budget).  Each training seed (50-59) trains the proposed policy and every
+comparison policy with the base contract's training recipe for ``max(budgets)`` updates, the
+same episode seeds for all policies of a seed.  The weights after exactly B updates, for every
+budget B (100, 200, 600), are kept (``pilot.train_seed(snapshots=...)``); no checkpoint is
+selected and no validation runs.  Each budget's weights fly the ten evaluation cells
+(``cells.py``, deterministic policy, 50 episodes per cell) on environments shared by every
+policy and budget of a training seed.
 
-Decision rule (``RULE``, hashed into the registration).  A model's score at budget B is
-its success rate averaged over the ten cells.  Per comparison arm X and budget B the paired
-difference per training seed is score(ORL) - score(X).  The budgets are tested as a fixed
-sequence, in the registered order (100, 200, 600): at each budget the two-sided paired-t
-interval at 1 - alpha/2 (Bonferroni over the two comparisons) gives BETTER (low > 0),
-WORSE (high < 0) or NOT ESTABLISHED; the sequence goes on to the next budget only after a
-BETTER or WORSE verdict, so later budgets of a stopped sequence carry no verdict.  The fixed
-sequence keeps the family-wise error at alpha without splitting it over budgets.
+Decision rule (``RULE``, part of the plan hash written before any model trains).  A model's
+score at budget B is its success rate averaged over the ten cells (eq. (16)).  Per comparison
+policy X and budget B the paired difference per training seed is score(ORL) - score(X).  The
+budgets are tested as a fixed sequence (100, 200, 600): at each budget the two-sided paired-t
+interval at 1 - alpha/2 (Bonferroni over the two comparisons) gives BETTER (low > 0), WORSE
+(high < 0) or NOT ESTABLISHED, and the sequence goes on to the next budget only after BETTER
+or WORSE, so later budgets of a stopped sequence carry no verdict.
 
-Procedure (isaac-equal-budget/1).  Every model's weights at one registered budget fly the
-same Isaac cases (development cells without the local-only optical noise factor, fresh
-environment seeds), deterministically, on an owned Isaac Sim + PX4 stack; the identical
-cases also fly on the local plant for a paired transfer record.  Registration binds the
-sha256 of every checkpoint before anything flies.  ``ISAAC_RULE``: per comparison arm, the
-paired-t interval at 1 - alpha/2 of the per-seed difference in Isaac success rate gives
-BETTER / WORSE / NOT ESTABLISHED.
+Procedure (closed loop).  Every model's weights at budget 600 fly the same Isaac cases
+(trained directions, held-out directions, combined condition; five fresh environments each)
+deterministically on an owned Isaac Sim + PX4 stack; the identical cases also fly on the local
+plant.  The plan record binds the sha256 of every checkpoint before anything flies.
+``ISAAC_RULE``: per comparison policy, the paired-t interval at 1 - alpha/2 of the per-seed
+difference in Isaac success rate gives BETTER / WORSE / NOT ESTABLISHED.
 """
 from __future__ import annotations
 
@@ -41,19 +37,19 @@ from dataclasses import asdict, dataclass, replace
 import datetime as dt
 import hashlib
 import json
+import math
 import multiprocessing
 from pathlib import Path
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 import numpy as np
 import yaml
 
-from . import development as dev
+from . import cells
 from . import orl
 from . import speed
-from .contracts import (AUDITED_SEED_RANGES, DIAGNOSTIC_SEED_RANGES, PROJECT_ROOT,
-                        CurrentSemanticsConfig, contract_manifest, load_config)
+from .contracts import PROJECT_ROOT, CurrentSemanticsConfig, contract_manifest, load_config
 
 PROTOCOL = "equal-budget/1"
 ISAAC_PROTOCOL = "isaac-equal-budget/1"
@@ -80,14 +76,20 @@ ISAAC_RULE = (
     "interval of mean d at 1 - family_alpha/2 (Bonferroni over the comparisons); BETTER iff "
     "low > 0, WORSE iff high < 0, otherwise not established.  The paired local-plant "
     "verdicts on the identical cases are reported, never decisive.")
-SPENT_MODEL_SEEDS = speed.SPENT_MODEL_SEEDS | frozenset(range(40, 50))   # + learning-speed/1
-SPENT_TRAINING_SEEDS = (*speed.SPENT_TRAINING_SEEDS,
-                        ("learning-speed/1 training", 340_000_000, 349_007_199))
-SPENT_LOCAL_EVALUATION = (("confirmation/1 evaluation (archived)", 200_000_000, 209_999_999),)
-SPENT_ISAAC_SEEDS = (*speed.SPENT_ISAAC_SEEDS,
-                     ("confirmation/1 Isaac environments (archived)", 994_201, 994_230),
-                     ("monitor probe and demo flights", 999_901, 999_904))
-ACTION_OFFSET = 9_000_000      # the development cells' action seed = environment seed + this
+ACTION_OFFSET = 9_000_000      # an evaluation episode's action seed = environment seed + this
+
+
+def _plain(value: Any) -> Any:
+    """JSON-safe copy: tuples to lists, numpy scalars to Python, non-finite floats to None."""
+    if isinstance(value, Mapping):
+        return {str(k): _plain(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(v) for v in value]
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if hasattr(value, "item") and not isinstance(value, (str, bytes)):
+        return value.item()
+    return value
 
 
 # ----------------------------------------------------------------------------- plans
@@ -96,7 +98,7 @@ ACTION_OFFSET = 9_000_000      # the development cells' action seed = environmen
 class BudgetPlan:
     protocol: str
     proposed: str                       # an ORL version, e.g. "orl/1"
-    comparisons: tuple[str, ...]        # registered arm names
+    comparisons: tuple[str, ...]        # arm names of models.build_model
     training_seeds: tuple[int, ...]
     train_seed_base: int
     budgets: tuple[int, ...]            # strictly increasing: the fixed testing sequence
@@ -104,9 +106,9 @@ class BudgetPlan:
     family_alpha: float
     episodes_per_cell: int
     env_seed_base: int
-    cells_from: str                     # the development protocol whose cells are flown
+    cells_from: str                     # the name of the evaluation cells' definition
     dropout_start_s: tuple[float, float]
-    cells: tuple[dev.EvaluationCell, ...]
+    cells: tuple[cells.EvaluationCell, ...]
 
     @property
     def proposed_arm(self) -> str:
@@ -120,7 +122,7 @@ class BudgetPlan:
     def updates(self) -> int:
         return max(self.budgets)
 
-    def cell(self, name: str) -> dev.EvaluationCell:
+    def cell(self, name: str) -> cells.EvaluationCell:
         return next(c for c in self.cells if c.name == name)
 
     def train_seed(self, model_seed: int, update: int, episode: int, per: int) -> int:
@@ -140,7 +142,7 @@ class IsaacBudgetPlan:
     budget: int
     mode: str
     family_alpha: float
-    conditions: tuple[tuple[str, tuple[int, ...]], ...]   # (development cell, environments)
+    conditions: tuple[tuple[str, tuple[int, ...]], ...]   # (evaluation cell, environments)
 
     @property
     def seeds(self) -> tuple[int, ...]:
@@ -152,15 +154,8 @@ class IsaacBudgetPlan:
                 "conditions": {name: list(seeds) for name, seeds in self.conditions}}
 
 
-def _check_contract(config: CurrentSemanticsConfig) -> None:
-    if config.navigation is not None:
-        raise ValueError(f"{PROTOCOL} runs on the base navigation contract only "
-                         "(spatial_view_contact_v1.yaml); this config carries a navigation "
-                         "estimator")
-
-
 def load_plan(path: str | Path, config: CurrentSemanticsConfig) -> BudgetPlan:
-    data = dev._section(yaml.safe_load(Path(path).read_text(encoding="utf-8")),
+    data = cells._section(yaml.safe_load(Path(path).read_text(encoding="utf-8")),
                         ("protocol", "proposed", "comparisons", "training_seeds",
                          "train_seed_base", "budgets", "workers", "family_alpha", "evaluation"),
                         "equal_budget")
@@ -172,63 +167,61 @@ def load_plan(path: str | Path, config: CurrentSemanticsConfig) -> BudgetPlan:
     if not comparisons or len(set(comparisons)) != len(comparisons) \
             or not set(comparisons) <= set(speed.COMPARABLE):
         raise ValueError(f"equal_budget.comparisons must be distinct arms of {speed.COMPARABLE}")
-    seeds = dev._seeds(data["training_seeds"], "equal_budget.training_seeds")
+    seeds = cells._seeds(data["training_seeds"], "equal_budget.training_seeds")
     if len(seeds) < 3:
         raise ValueError("a paired-t comparison needs at least three training seeds")
-    budgets = tuple(int(dev._number(b, "equal_budget.budgets", low=1))
+    budgets = tuple(int(cells._number(b, "equal_budget.budgets", low=1))
                     for b in (data["budgets"] or []))
     if not budgets or any(a >= b for a, b in zip(budgets, budgets[1:])):
         raise ValueError("equal_budget.budgets must be a strictly increasing list")
-    evaluation = dev._section(data["evaluation"], ("episodes_per_cell", "env_seed_base",
+    evaluation = cells._section(data["evaluation"], ("episodes_per_cell", "env_seed_base",
                                                    "cells_from"), "equal_budget.evaluation")
-    development = dev.load_development(dev.DEFAULT_DEVELOPMENT_PATH, config)
-    if evaluation["cells_from"] != development.protocol:
-        raise ValueError("equal_budget.evaluation.cells_from must name the registered "
-                         f"development protocol {development.protocol!r}")
-    episodes = int(dev._number(evaluation["episodes_per_cell"], "episodes_per_cell", low=1))
+    evaluation_cells = cells.load_cells(cells.DEFAULT_CELLS_PATH, config)
+    if evaluation["cells_from"] != evaluation_cells.protocol:
+        raise ValueError("equal_budget.evaluation.cells_from must name the evaluation cells "
+                         f"{evaluation_cells.protocol!r}")
+    episodes = int(cells._number(evaluation["episodes_per_cell"], "episodes_per_cell", low=1))
     if episodes > 1000:
         raise ValueError("episodes_per_cell must be at most 1000 (one seed block per cell)")
     plan = BudgetPlan(
         protocol=PROTOCOL, proposed=data["proposed"], comparisons=comparisons,
         training_seeds=seeds,
-        train_seed_base=int(dev._number(data["train_seed_base"], "train_seed_base", low=0)),
-        budgets=budgets, workers=int(dev._number(data["workers"], "workers", low=1)),
+        train_seed_base=int(cells._number(data["train_seed_base"], "train_seed_base", low=0)),
+        budgets=budgets, workers=int(cells._number(data["workers"], "workers", low=1)),
         family_alpha=speed._alpha(data["family_alpha"], "family_alpha"),
         episodes_per_cell=episodes,
-        env_seed_base=int(dev._number(evaluation["env_seed_base"], "env_seed_base", low=0)),
-        cells_from=development.protocol, dropout_start_s=development.dropout_start_s,
-        cells=development.cells)
+        env_seed_base=int(cells._number(evaluation["env_seed_base"], "env_seed_base", low=0)),
+        cells_from=evaluation_cells.protocol, dropout_start_s=evaluation_cells.dropout_start_s,
+        cells=evaluation_cells.cells)
     if plan.updates > config.g4.updates:
         raise ValueError(f"the largest budget exceeds the G4 recipe's {config.g4.updates} updates")
-    _check_contract(config)
-    _audit(plan, config, development)
+    _audit(plan, config)
     return plan
 
 
-def _used_ranges(config: CurrentSemanticsConfig,
-                 development: dev.DevelopmentPlan) -> list[tuple[str, int, int]]:
-    used = [(name, first, last) for name, first, last, _ in AUDITED_SEED_RANGES]
-    used += list(DIAGNOSTIC_SEED_RANGES) + list(dev.SPENT_DEVELOPMENT_SEEDS)
-    used += list(SPENT_ISAAC_SEEDS) + list(SPENT_TRAINING_SEEDS) + list(SPENT_LOCAL_EVALUATION)
-    used += [("g4 pilot training", *dev._PILOT_SEEDS)]
-    return used
-
-
-def _taken(config: CurrentSemanticsConfig, development: dev.DevelopmentPlan) -> set[int]:
+def _taken(config: CurrentSemanticsConfig) -> set[int]:
+    """Seeds the base contract reserves: its validation, test and Isaac seeds."""
     return (set(config.g4.validation_seeds) | set(config.g4.test_seeds)
-            | set(config.g3.pilot_seeds) | set(config.isaac_eval.seeds)
-            | set(development.validation_seeds))
+            | set(config.g3.pilot_seeds) | set(config.isaac_eval.seeds))
 
 
-def _audit(plan: BudgetPlan, config: CurrentSemanticsConfig,
-           development: dev.DevelopmentPlan) -> None:
-    """No seed of this plan may lie in any recorded or registered use, or in another block
-    of this plan."""
+def _speed_blocks(config: CurrentSemanticsConfig) -> list[tuple[str, int, int]]:
+    """The learning-speed comparison's training episodes: never reused here."""
+    splan = speed.load_plan(speed.DEFAULT_PATH, config)
+    per = config.g4.episodes_per_update
+    return [(f"learning-speed seed {s}", splan.train_seed(s, 0, 0, per),
+             splan.train_seed(s, splan.cap - 1, per - 1, per)) for s in splan.training_seeds]
+
+
+def _audit(plan: BudgetPlan, config: CurrentSemanticsConfig) -> None:
+    """Fresh seeds: the training seeds differ from the learning-speed comparison's, no seed
+    block of this plan overlaps another, a learning-speed block or a reserved seed."""
     g4 = config.g4
     per = g4.episodes_per_update
-    if set(plan.training_seeds) & (SPENT_MODEL_SEEDS | set(g4.model_seeds)):
-        raise ValueError("equal-budget training seeds reuse a G4, development, confirmation "
-                         "or learning-speed model seed")
+    splan = speed.load_plan(speed.DEFAULT_PATH, config)
+    if set(plan.training_seeds) & (set(splan.training_seeds) | set(g4.model_seeds)):
+        raise ValueError("equal-budget training seeds reuse a learning-speed or base-recipe "
+                         "model seed")
     last = len(plan.training_seeds) - 1
     blocks = [(f"training seed {s}", plan.train_seed(s, 0, 0, per),
                plan.train_seed(s, plan.updates - 1, per - 1, per)) for s in plan.training_seeds]
@@ -236,14 +229,14 @@ def _audit(plan: BudgetPlan, config: CurrentSemanticsConfig,
     high = plan.eval_seed(last, len(plan.cells) - 1, plan.episodes_per_cell - 1)
     blocks += [("evaluation environments", low, high),
                ("evaluation action seeds", low + ACTION_OFFSET, high + ACTION_OFFSET)]
-    used = _used_ranges(config, development)
-    taken = _taken(config, development)
+    used = _speed_blocks(config)
+    taken = _taken(config)
     for name, first, final in blocks:
         for other, a, b in used:
             if first <= b and a <= final:
                 raise ValueError(f"equal-budget {name} ({first}-{final}) overlaps {other}")
         if any(first <= s <= final for s in taken):
-            raise ValueError(f"equal-budget {name} ({first}-{final}) overlaps a registered seed")
+            raise ValueError(f"equal-budget {name} ({first}-{final}) overlaps a reserved seed")
     spans = sorted((a, b) for _, a, b in blocks)
     if any(spans[i][1] >= spans[i + 1][0] for i in range(len(spans) - 1)):
         raise ValueError("equal-budget seed blocks overlap each other")
@@ -251,37 +244,36 @@ def _audit(plan: BudgetPlan, config: CurrentSemanticsConfig,
 
 def load_isaac_plan(path: str | Path, config: CurrentSemanticsConfig,
                     plan: BudgetPlan) -> IsaacBudgetPlan:
-    data = dev._section(yaml.safe_load(Path(path).read_text(encoding="utf-8")),
+    data = cells._section(yaml.safe_load(Path(path).read_text(encoding="utf-8")),
                         ("protocol", "source_protocol", "budget", "mode", "family_alpha",
                          "conditions"), "isaac_equal_budget")
     if data["protocol"] != ISAAC_PROTOCOL:
         raise ValueError(f"isaac_equal_budget.protocol must be {ISAAC_PROTOCOL!r}")
     if data["source_protocol"] != plan.protocol:
         raise ValueError(f"isaac_equal_budget.source_protocol must be {plan.protocol!r}")
-    budget = int(dev._number(data["budget"], "isaac_equal_budget.budget", low=1))
+    budget = int(cells._number(data["budget"], "isaac_equal_budget.budget", low=1))
     if budget not in plan.budgets:
         raise ValueError(f"isaac_equal_budget.budget must be one of {plan.budgets}")
     if data["mode"] != "deterministic":
         raise ValueError("isaac_equal_budget.mode must be deterministic")
     if not isinstance(data["conditions"], dict) or not data["conditions"]:
-        raise ValueError("isaac_equal_budget.conditions must map development cells to seeds")
+        raise ValueError("isaac_equal_budget.conditions must map evaluation cells to seeds")
     conditions = []
     for name, seeds in data["conditions"].items():
-        if name not in dev.CELLS:
-            raise ValueError(f"isaac_equal_budget condition {name!r} is not a development cell")
+        if name not in cells.CELLS:
+            raise ValueError(f"isaac_equal_budget condition {name!r} is not an evaluation cell")
         if plan.cell(name).optical_noise_scale != 1.0:
             raise ValueError(f"{name} scales the optical noise, which only the local plant "
                              "applies; Isaac cannot fly it")
-        conditions.append((name, dev._seeds(seeds, f"isaac_equal_budget.conditions.{name}")))
+        conditions.append((name, cells._seeds(seeds, f"isaac_equal_budget.conditions.{name}")))
     iplan = IsaacBudgetPlan(protocol=ISAAC_PROTOCOL, source_protocol=plan.protocol,
                             budget=budget, mode="deterministic",
                             family_alpha=speed._alpha(data["family_alpha"], "family_alpha"),
                             conditions=tuple(conditions))
     if len(set(iplan.seeds)) != len(iplan.seeds):
         raise ValueError("isaac_equal_budget seeds must be distinct across conditions")
-    development = dev.load_development(dev.DEFAULT_DEVELOPMENT_PATH, config)
-    used = _used_ranges(config, development)
-    taken = _taken(config, development)
+    used = _speed_blocks(config)
+    taken = _taken(config)
     last = len(plan.training_seeds) - 1
     used += [("equal-budget evaluation environments", plan.eval_seed(0, 0, 0),
               plan.eval_seed(last, len(plan.cells) - 1, plan.episodes_per_cell - 1))]
@@ -295,7 +287,8 @@ def load_isaac_plan(path: str | Path, config: CurrentSemanticsConfig,
 
 def arm_config(config: CurrentSemanticsConfig, plan: BudgetPlan, arm: str
                ) -> CurrentSemanticsConfig:
-    """The base contract's G4 recipe re-pointed at one arm, this plan's seeds and budget."""
+    """The base contract's training recipe (``config.g4``) re-pointed at one arm, this
+    plan's seeds and budget."""
     return replace(config, g4=replace(config.g4, arm=arm, model_seeds=plan.training_seeds,
                                       train_seed_base=plan.train_seed_base,
                                       updates=plan.updates))
@@ -305,7 +298,7 @@ def plan_hash(plan: BudgetPlan, config: CurrentSemanticsConfig) -> str:
     from ..direct_policy.contracts import digest
     manifest = contract_manifest(config)
     return digest({"plan": plan.to_dict(), "rule": RULE, "orl_hash": orl.HASHES[plan.proposed],
-                   "contract": {k: manifest[k] for k in dev.BOUND_HASHES}})
+                   "contract": {k: manifest[k] for k in speed.BOUND_HASHES}})
 
 
 def isaac_plan_hash(iplan: IsaacBudgetPlan, source_hash: str) -> str:
@@ -353,7 +346,8 @@ def resolved(plan: BudgetPlan, config: CurrentSemanticsConfig) -> dict[str, Any]
 # ----------------------------------------------------------------- registration
 
 def register(config_path: Path, plan_path: Path, root: Path) -> tuple[int, dict[str, Any]]:
-    """Write the registration before any model trains; an existing one must match."""
+    """Write the plan record (plan, rule and contract hashes) before any model trains; an
+    existing one must match."""
     from .experiment import write_json
     config = load_config(config_path)
     plan = load_plan(plan_path, config)
@@ -436,10 +430,10 @@ def evaluate_budget(pool: Any, plan: BudgetPlan, arm: str, state: dict[str, Any]
                 tasks = [(arm, state, s, spec, plan.dropout_start_s, s + ACTION_OFFSET)
                          for s in seeds]
                 have = [{"cell": cell.name, **e}
-                        for e in pool.map(dev._cell_work, tasks, chunksize=2)]
+                        for e in pool.map(cells._cell_work, tasks, chunksize=2)]
                 handle.write("".join(json.dumps(r, allow_nan=False) + "\n" for r in have))
                 handle.flush()
-            out[cell.name] = dev.summarize_cell(have)
+            out[cell.name] = cells.summarize_cell(have)
     success = [out[c.name]["success"] for c in plan.cells]
     unsafe = [out[c.name]["unsafe"] for c in plan.cells]
     return {"cells": out,
@@ -449,7 +443,7 @@ def evaluate_budget(pool: Any, plan: BudgetPlan, arm: str, state: dict[str, Any]
 
 def run(config_path: Path, plan_path: Path, root: Path, *,
         log: Callable[[str], None] = print, workers: int | None = None) -> tuple[int, dict]:
-    """Train and evaluate every registered model nobody holds; any number of processes
+    """Train and evaluate every planned model nobody holds; any number of processes
     share them.  A model whose training finished but whose evaluation did not is evaluated
     without retraining."""
     import torch
@@ -495,10 +489,10 @@ def run(config_path: Path, plan_path: Path, root: Path, *,
                         f"(weights kept at {list(plan.budgets)})")
                     for stale in directory.glob("eval_budget_*.jsonl"):
                         stale.unlink()
-                    dev._status(directory, "training")
+                    cells._status(directory, "training")
                     trained = train_seed(acfg, config_path, int(seed_text), directory, pool,
                                          log=log, updates=plan.updates,
-                                         snapshots=plan.budgets, validate=False)
+                                         snapshots=plan.budgets)
                     write_json(directory / "training.json", trained)
                 rows = _rows(directory / "history.jsonl")
                 budgets = {}
@@ -512,7 +506,7 @@ def run(config_path: Path, plan_path: Path, root: Path, *,
                     result = evaluate_budget(
                         pool, plan, arm, state, seed_index,
                         directory / f"eval_budget_{budget}.jsonl",
-                        progress=lambda name, index, b=budget: dev._status(
+                        progress=lambda name, index, b=budget: cells._status(
                             directory, "evaluating", budget=b, cell=name, cell_index=index,
                             cells=len(plan.cells)))
                     budgets[str(budget)] = {
@@ -529,7 +523,7 @@ def run(config_path: Path, plan_path: Path, root: Path, *,
                     "first_full_update": speed.first_full(rows), "training": trained,
                     "budgets": budgets})
                 speed.release(directory)
-                dev._status(directory, "done")
+                cells._status(directory, "done")
                 done_here.append(key)
     return 0, {"stage": "budget", "protocol": PROTOCOL, "trained_here": done_here,
                "wall_s": time.monotonic() - started}
@@ -564,7 +558,7 @@ def _verdict(interval: dict[str, Any]) -> str:
 
 def compare(plan: BudgetPlan, proposed: dict[int, dict[str, Any]],
             other: dict[int, dict[str, Any]]) -> dict[str, Any]:
-    """The registered fixed-sequence comparison of one arm pair over the budgets (``RULE``)."""
+    """The prespecified fixed-sequence comparison of one arm pair over the budgets (``RULE``)."""
     seeds = sorted(set(proposed) & set(other))
     confidence = 1.0 - plan.family_alpha / len(plan.comparisons)
     out, stopped_at = {}, None
@@ -712,12 +706,11 @@ ROW_KEYS = ("status", "decisions", "elapsed_s", "return", "termination", "termin
 
 
 def isaac_run(config: CurrentSemanticsConfig, plan: BudgetPlan, iplan: IsaacBudgetPlan,
-              root: Path, make_backend: Callable[[dev.EvaluationCell], Any], out: Path, *,
+              root: Path, make_backend: Callable[[cells.EvaluationCell], Any], out: Path, *,
               log: Callable[[str], None] = print, resume: bool = False) -> dict[str, Any]:
-    """Fly the registered cases on the backends ``make_backend(cell)`` returns (once per
+    """Fly the planned cases on the backends ``make_backend(cell)`` returns (once per
     condition; any backend works, so the logic is testable on the local plant)."""
     import torch
-    from .isaac_eval import _plain
     from .pilot import fly_policy
     keys = isaac_keys(plan)
     models = {k: load_weights(arm_config(config, plan, k.split("/", 1)[1]), k.split("/", 1)[1],
@@ -780,7 +773,7 @@ def isaac_run(config: CurrentSemanticsConfig, plan: BudgetPlan, iplan: IsaacBudg
 
 def isaac_local_reference(config_path: Path, plan: BudgetPlan, iplan: IsaacBudgetPlan,
                           root: Path, *, workers: int = 16) -> list[dict[str, Any]]:
-    """The identical cases on the calibrated local plant (the development cells' own path)."""
+    """The identical cases on the calibrated local plant (the evaluation cells' own path)."""
     from .pilot import _init_worker
     config = load_config(config_path)
     keys = isaac_keys(plan)
@@ -795,7 +788,7 @@ def isaac_local_reference(config_path: Path, plan: BudgetPlan, iplan: IsaacBudge
               plan.dropout_start_s, seed + ACTION_OFFSET) for cell, seed, key in order]
     with ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn"),
                              initializer=_init_worker, initargs=(str(config_path),)) as pool:
-        episodes = list(pool.map(dev._cell_work, tasks, chunksize=4))
+        episodes = list(pool.map(cells._cell_work, tasks, chunksize=4))
     return [{"condition": c, "seed": int(s), "model": k, "arm": k.split("/", 1)[1],
              "training_seed": int(k.split("/", 1)[0]), "status": e.get("status"),
              "refused": e.get("refused"), "decisions": e.get("decisions")}
@@ -810,7 +803,6 @@ def _rate(rows: list[dict[str, Any]], test: Callable[[str | None], bool]) -> flo
 def isaac_report(config: CurrentSemanticsConfig, plan: BudgetPlan, iplan: IsaacBudgetPlan,
                  flown: dict[str, Any], local: list[dict[str, Any]] | None, *,
                  backend: str | None, profile_sha256: str | None) -> dict[str, Any]:
-    from .isaac_eval import _plain
     success = lambda s: s == "SUCCESS"
     isaac, local = flown["rows"], local or []
     per_model = {}
@@ -818,7 +810,7 @@ def isaac_report(config: CurrentSemanticsConfig, plan: BudgetPlan, iplan: IsaacB
         mine = [r for r in isaac if r["model"] == key]
         ref = [r for r in local if r["model"] == key]
         per_model[key] = {"episodes": len(mine), "success": _rate(mine, success),
-                          "unsafe": _rate(mine, dev.unsafe),
+                          "unsafe": _rate(mine, cells.unsafe),
                           "local_success": _rate(ref, success),
                           "by_condition": {c: _rate([r for r in mine if r["condition"] == c],
                                                     success) for c, _ in iplan.conditions}}
